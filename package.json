@@ -1,0 +1,15 @@
+{
+  "name": "portfolio-intelligence",
+  "version": "2.0.0",
+  "description": "Portfolio Intelligence & Net Worth Calculator — overlap analysis, scoring, and rebalancing suggestions",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "author": "therealkranup",
+  "private": true
+}

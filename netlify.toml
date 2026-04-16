@@ -1,0 +1,17 @@
+[build]
+  publish = "."
+
+[[redirects]]
+  from = "/api/scan"
+  to = "/.netlify/functions/scan"
+  status = 200
+
+[[redirects]]
+  from = "/api/holdings/*"
+  to = "/.netlify/functions/holdings"
+  status = 200
+
+[[redirects]]
+  from = "/api/fundamentals/*"
+  to = "/.netlify/functions/fundamentals"
+  status = 200
