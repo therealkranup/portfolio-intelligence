@@ -387,29 +387,49 @@ function initPortfolio() {
   const modal = document.getElementById('modal-position');
   const form = document.getElementById('position-form');
 
-  // Import positions from JSON
+  // Import positions from JSON, PDF, or image
   document.getElementById('import-portfolio-btn')?.addEventListener('click', () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
-    input.addEventListener('change', () => {
-      const file = input.files[0];
-      if (!file) return;
+    // Show the import modal with broker/account picker
+    const modal = document.getElementById('modal-import');
+    if (modal) {
+      document.getElementById('import-status').hidden = true;
+      document.getElementById('import-status').innerHTML = '';
+      document.getElementById('import-file').value = '';
+      modal.showModal();
+    }
+  });
+
+  // Handle import form submission
+  document.getElementById('import-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fileInput = document.getElementById('import-file');
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    const broker = document.getElementById('import-broker').value;
+    const accountType = document.getElementById('import-account-type').value;
+    const status = document.getElementById('import-status');
+    status.hidden = false;
+
+    // JSON files → direct import
+    if (file.name.endsWith('.json')) {
+      status.innerHTML = '<p style="color:var(--text-secondary)">Læser JSON…</p>';
       const reader = new FileReader();
       reader.onload = () => {
         try {
           const data = JSON.parse(reader.result);
-          // Support both { positions: [...] } and raw array [...]
           const positions = Array.isArray(data) ? data : (data.positions || []);
           if (!positions.length) {
-            alert('Ingen positioner fundet i filen.');
+            status.innerHTML = '<p style="color:var(--rose-400)">Ingen positioner fundet i filen.</p>';
             return;
           }
           let imported = 0;
           positions.forEach(p => {
             if (p.ticker || p.name) {
               APP_STATE.positions.push({
-                id: p.id || crypto.randomUUID(),
+                id: crypto.randomUUID(),
+                broker: p.broker || broker,
+                accountType: p.accountType || accountType,
                 ticker: (p.ticker || '').toUpperCase(),
                 name: p.name || p.ticker || '',
                 type: p.type || 'stock',
@@ -422,14 +442,93 @@ function initPortfolio() {
           });
           saveData();
           renderAll();
-          alert(`${imported} positioner importeret.`);
+          status.innerHTML = `<p style="color:var(--emerald-400)">${imported} positioner importeret fra ${broker.charAt(0).toUpperCase() + broker.slice(1)}.</p>`;
+          setTimeout(() => document.getElementById('modal-import').close(), 1500);
         } catch (err) {
-          alert('Kunne ikke læse filen: ' + err.message);
+          status.innerHTML = `<p style="color:var(--rose-400)">Fejl: ${err.message}</p>`;
         }
       };
       reader.readAsText(file);
-    });
-    input.click();
+      return;
+    }
+
+    // PDF or image → scan with AI
+    status.innerHTML = '<p style="color:var(--text-secondary)">Forbereder dokument til AI-scanning…</p>';
+    try {
+      const imageBlocks = await prepareFileForScan(file);
+      const totalKB = imageBlocks.reduce((sum, b) => sum + (b.source.data.length * 0.75 / 1024), 0);
+      status.innerHTML = `<p style="color:var(--text-secondary)">Analyserer med AI… (${totalKB.toFixed(0)} KB)</p>`;
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 90000);
+
+      const resp = await fetch('/api/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: 'google/gemini-2.0-flash-001',
+          max_tokens: 4096,
+          messages: [{
+            role: 'user',
+            content: [
+              ...imageBlocks,
+              {
+                type: 'text',
+                text: `Analyze this financial document (likely a bank/broker portfolio report). Extract ONLY the LATEST/MOST RECENT snapshot — do NOT extract historical rows or monthly breakdowns. If there is a table with multiple dates, only use the most recent column.
+
+IMPORTANT RULES:
+1. Only return CURRENT BALANCES — not P/L, returns, deposits, transfers, accruals, or any flows/changes.
+2. Do NOT double-count. If "Account value = Cash + Position Value", only return Cash and Position Value — NOT the total.
+3. Only return items that represent money the person currently HAS (assets) or OWES (liabilities).
+
+Return ONLY valid JSON (no markdown): { "entries": [{ "name": "...", "amount": number, "type": "asset"|"liability", "category": "cash|investment|property|pension|vehicle|other_asset|mortgage|student_loan|car_loan|credit_card|other_liability" }], "positions": [{ "ticker": "...", "name": "...", "type": "stock|etf|fund|bond|crypto|other", "shares": number, "currentPrice": number }] }`
+              }
+            ]
+          }]
+        })
+      });
+      clearTimeout(timeout);
+
+      const data = await resp.json();
+      if (data.content && data.content[0] && data.content[0].text) {
+        const text = data.content[0].text;
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          let imported = 0;
+          if (parsed.entries) {
+            parsed.entries.forEach(e => {
+              APP_STATE.entries.push({ ...e, id: crypto.randomUUID() });
+            });
+          }
+          if (parsed.positions) {
+            parsed.positions.forEach(p => {
+              APP_STATE.positions.push({
+                ...p,
+                id: crypto.randomUUID(),
+                broker: broker,
+                accountType: accountType,
+                avgPrice: p.avgPrice || 0,
+              });
+              imported++;
+            });
+          }
+          saveData();
+          renderAll();
+          const entryCount = parsed.entries ? parsed.entries.length : 0;
+          status.innerHTML = `<p style="color:var(--emerald-400)">${imported} positioner og ${entryCount} poster importeret fra ${broker.charAt(0).toUpperCase() + broker.slice(1)}.</p>`;
+          setTimeout(() => document.getElementById('modal-import').close(), 2000);
+        } else {
+          status.innerHTML = `<p style="color:var(--rose-400)">AI kunne ikke finde data i dokumentet.</p>`;
+        }
+      } else {
+        status.innerHTML = `<p style="color:var(--rose-400)">Kunne ikke analysere dokumentet.</p>`;
+      }
+    } catch (err) {
+      const msg = err.name === 'AbortError' ? 'Timeout — prøv et mindre dokument.' : err.message;
+      status.innerHTML = `<p style="color:var(--rose-400)">Fejl: ${msg}</p>`;
+    }
   });
 
   addBtn.addEventListener('click', () => {
@@ -444,6 +543,8 @@ function initPortfolio() {
     const id = document.getElementById('position-id').value;
     const position = {
       id: id || crypto.randomUUID(),
+      broker: document.getElementById('position-broker').value,
+      accountType: document.getElementById('position-account-type').value,
       ticker: document.getElementById('position-ticker').value.toUpperCase(),
       name: document.getElementById('position-name').value,
       type: document.getElementById('position-type').value,
@@ -471,6 +572,8 @@ function editPosition(id) {
   const modal = document.getElementById('modal-position');
   document.getElementById('modal-position-title').textContent = t('modal.editPosition');
   document.getElementById('position-id').value = pos.id;
+  document.getElementById('position-broker').value = pos.broker || 'saxo';
+  document.getElementById('position-account-type').value = pos.accountType || 'free';
   document.getElementById('position-ticker').value = pos.ticker;
   document.getElementById('position-name').value = pos.name;
   document.getElementById('position-type').value = pos.type;
@@ -580,7 +683,9 @@ IMPORTANT RULES:
 2. Do NOT double-count. If "Account value = Cash + Position Value", only return Cash and Position Value — NOT the total.
 3. Only return items that represent money the person currently HAS (assets) or OWES (liabilities).
 
-Return ONLY valid JSON (no markdown): { "entries": [{ "name": "...", "amount": number, "type": "asset"|"liability", "category": "cash|investment|property|pension|vehicle|other_asset|mortgage|student_loan|car_loan|credit_card|other_liability" }], "positions": [{ "ticker": "...", "name": "...", "type": "stock|etf|fund|bond|crypto|other", "shares": number, "currentPrice": number }] }`
+4. Detect the broker/platform name (e.g. "saxo", "nordnet", "lunar") and account type (e.g. "ask" for Aktiesparekonto, "free" for frit depot, "pension").
+
+Return ONLY valid JSON (no markdown): { "broker": "saxo|nordnet|lunar|other", "accountType": "ask|free|pension|other", "entries": [{ "name": "...", "amount": number, "type": "asset"|"liability", "category": "cash|investment|property|pension|vehicle|other_asset|mortgage|student_loan|car_loan|credit_card|other_liability" }], "positions": [{ "ticker": "...", "name": "...", "type": "stock|etf|fund|bond|crypto|other", "shares": number, "currentPrice": number }] }`
             }
           ]
         }]
@@ -732,7 +837,13 @@ function initScanApply() {
     }
     if (data.positions) {
       data.positions.forEach(p => {
-        APP_STATE.positions.push({ ...p, id: crypto.randomUUID(), avgPrice: 0 });
+        APP_STATE.positions.push({
+          ...p,
+          id: crypto.randomUUID(),
+          avgPrice: p.avgPrice || 0,
+          broker: p.broker || data.broker || 'other',
+          accountType: p.accountType || data.accountType || 'free',
+        });
       });
     }
     saveData();
@@ -826,15 +937,29 @@ function renderHoldingsTable() {
   const totalValue = positions.reduce((s, p) => s + (p.shares * p.currentPrice), 0);
 
   if (positions.length === 0) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="8"><div class="empty-state">${t('portfolio.noHoldings')}</div></td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="9"><div class="empty-state">${t('portfolio.noHoldings')}</div></td></tr>`;
     return;
   }
 
-  tbody.innerHTML = positions.map(p => {
+  const brokerLabels = { saxo: 'Saxo', nordnet: 'Nordnet', lunar: 'Lunar', other: 'Anden' };
+  const accountLabels = { ask: 'ASK', free: 'Frit depot', pension: 'Pension', isk: 'ISK', other: 'Anden' };
+
+  // Sort by broker then account type for visual grouping
+  const sorted = [...positions].sort((a, b) => {
+    const ba = (a.broker || '').localeCompare(b.broker || '');
+    if (ba !== 0) return ba;
+    return (a.accountType || '').localeCompare(b.accountType || '');
+  });
+
+  tbody.innerHTML = sorted.map(p => {
     const value = p.shares * p.currentPrice;
     const weight = totalValue > 0 ? (value / totalValue * 100) : 0;
+    const broker = brokerLabels[p.broker] || p.broker || '—';
+    const acct = accountLabels[p.accountType] || p.accountType || '—';
+    const accountTag = `<span class="badge">${escapeHTML(broker)}</span> <span style="opacity:0.6;font-size:0.85em">${escapeHTML(acct)}</span>`;
     return `
       <tr>
+        <td>${accountTag}</td>
         <td><strong>${escapeHTML(p.ticker)}</strong></td>
         <td>${escapeHTML(p.name || '—')}</td>
         <td><span class="badge">${p.type}</span></td>

@@ -1,0 +1,38 @@
+{
+  "broker": "nordnet",
+  "accountType": "ask",
+  "positions": [
+    {
+      "ticker": "INDA",
+      "name": "iShares MSCI India UCITS ETF USD (Acc)",
+      "type": "etf",
+      "shares": 1,
+      "avgPrice": 0,
+      "currentPrice": 58
+    },
+    {
+      "ticker": "NGID125",
+      "name": "Nordnet Global Indeks 125 DKK",
+      "type": "fund",
+      "shares": 64,
+      "avgPrice": 0,
+      "currentPrice": 157.01
+    },
+    {
+      "ticker": "NGIDKK",
+      "name": "Nordnet Global Indeks DKK",
+      "type": "fund",
+      "shares": 97,
+      "avgPrice": 0,
+      "currentPrice": 212.74
+    },
+    {
+      "ticker": "NNMI",
+      "name": "Nordnet Nye Markeder Indeks",
+      "type": "fund",
+      "shares": 53,
+      "avgPrice": 0,
+      "currentPrice": 158.94
+    }
+  ]
+}
