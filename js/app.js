@@ -47,16 +47,16 @@ function formatPct(value, decimals = 1) {
 }
 
 // ── Supabase Client (lazy init) ──
-let supabase = null;
+let sbClient = null;
 
 function initSupabase() {
   // Will be configured in settings or via env
   const url = window.__SUPABASE_URL__;
   const key = window.__SUPABASE_ANON_KEY__;
   if (url && key && window.supabase) {
-    supabase = window.supabase.createClient(url, key);
+    sbClient = window.supabase.createClient(url, key);
   }
-  return supabase;
+  return sbClient;
 }
 
 // ── Navigation & Routing ──
@@ -142,9 +142,9 @@ function initAuth() {
     const errorEl = document.getElementById('login-error');
     errorEl.hidden = true;
 
-    if (supabase) {
+    if (sbClient) {
       try {
-        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        const { data, error } = await sbClient.auth.signInWithPassword({ email, password });
         if (error) throw error;
         APP_STATE.user = data.user;
         showApp();
@@ -175,9 +175,9 @@ function initAuth() {
       return;
     }
 
-    if (supabase) {
+    if (sbClient) {
       try {
-        const { data, error } = await supabase.auth.signUp({ email, password });
+        const { data, error } = await sbClient.auth.signUp({ email, password });
         if (error) throw error;
         APP_STATE.user = data.user;
         showApp();
@@ -201,7 +201,7 @@ function initAuth() {
 
   // Logout
   document.getElementById('logout-btn').addEventListener('click', async () => {
-    if (supabase) await supabase.auth.signOut();
+    if (sbClient) await sbClient.auth.signOut();
     APP_STATE.user = null;
     APP_STATE.demoMode = false;
     showAuthScreen();
@@ -496,47 +496,51 @@ async function handleScanFile(file) {
     const img = document.createElement('img');
     img.src = URL.createObjectURL(file);
     img.style.maxWidth = '100%';
-    img.style.borderRadius = 'var(--radius-lg)';
+    img.style.borderRadius = 'var(--r-lg)';
     preview.innerHTML = '';
     preview.appendChild(img);
   } else {
     preview.innerHTML = `<p style="color:var(--text-secondary)">${file.name} (${(file.size/1024).toFixed(0)} KB)</p>`;
   }
 
-  // Convert to base64
   loading.hidden = false;
-  const base64 = await fileToBase64(file);
-  const mediaType = file.type || 'application/pdf';
+  loading.innerHTML = `<p style="color:var(--text-secondary)">Forbereder dokument…</p>`;
 
   try {
+    // Convert file to optimized image(s) for the AI
+    const imageBlocks = await prepareFileForScan(file);
+    const totalKB = imageBlocks.reduce((sum, b) => sum + (b.source.data.length * 0.75 / 1024), 0);
+    loading.innerHTML = `<p style="color:var(--text-secondary)">Analyserer med AI… (${totalKB.toFixed(0)} KB)</p>`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 90000); // 90s client timeout
+
     const resp = await fetch('/api/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'google/gemini-2.0-flash-001',
         max_tokens: 4096,
         messages: [{
           role: 'user',
           content: [
-            {
-              type: 'image',
-              source: { type: 'base64', media_type: mediaType, data: base64 }
-            },
+            ...imageBlocks,
             {
               type: 'text',
-              text: `Analyze this financial document. Extract all monetary amounts, asset names, and categories. Return JSON: { "entries": [{ "name": "...", "amount": number, "type": "asset"|"liability", "category": "cash|investment|property|pension|vehicle|other_asset|mortgage|student_loan|car_loan|credit_card|other_liability" }], "positions": [{ "ticker": "...", "name": "...", "type": "stock|etf|fund|bond|crypto|other", "shares": number, "currentPrice": number }] }`
+              text: `Analyze this financial document. Extract all monetary amounts, asset names, and categories. Return ONLY valid JSON (no markdown, no explanation): { "entries": [{ "name": "...", "amount": number, "type": "asset"|"liability", "category": "cash|investment|property|pension|vehicle|other_asset|mortgage|student_loan|car_loan|credit_card|other_liability" }], "positions": [{ "ticker": "...", "name": "...", "type": "stock|etf|fund|bond|crypto|other", "shares": number, "currentPrice": number }] }`
             }
           ]
         }]
       })
     });
+    clearTimeout(timeout);
 
     const data = await resp.json();
     loading.hidden = true;
 
     if (data.content && data.content[0] && data.content[0].text) {
       const text = data.content[0].text;
-      // Try to parse JSON from the response
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
@@ -550,13 +554,78 @@ async function handleScanFile(file) {
       }
     } else {
       result.hidden = false;
-      result.innerHTML = `<p style="color:var(--color-negative)">Kunne ikke analysere dokumentet.</p>`;
+      result.innerHTML = `<p style="color:var(--rose-400)">Kunne ikke analysere dokumentet.</p>`;
     }
   } catch (err) {
     loading.hidden = true;
     result.hidden = false;
-    result.innerHTML = `<p style="color:var(--color-negative)">Fejl: ${err.message}</p>`;
+    const msg = err.name === 'AbortError' ? 'Timeout — dokumentet tog for lang tid. Prøv et mindre dokument.' : err.message;
+    result.innerHTML = `<p style="color:var(--rose-400)">Fejl: ${msg}</p>`;
   }
+}
+
+// Convert any file into optimized image block(s) for the AI API
+async function prepareFileForScan(file) {
+  const MAX_DIM = 1200; // max width/height for AI — keeps payload small
+  const JPEG_QUALITY = 0.7;
+
+  // PDF → render pages as images using PDF.js
+  if (file.type === 'application/pdf') {
+    if (!window.pdfjsLib) {
+      // Fallback: send raw base64 (slower but works)
+      const base64 = await fileToBase64(file);
+      return [{ type: 'image', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }];
+    }
+    const arrayBuf = await file.arrayBuffer();
+    const pdf = await window.pdfjsLib.getDocument({ data: arrayBuf }).promise;
+    const pages = Math.min(pdf.numPages, 3); // max 3 pages to keep it fast
+    const blocks = [];
+    for (let i = 1; i <= pages; i++) {
+      const page = await pdf.getPage(i);
+      const scale = Math.min(MAX_DIM / page.getViewport({ scale: 1 }).width, 2);
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+      const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+      const base64 = dataUrl.split(',')[1];
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64 } });
+    }
+    return blocks;
+  }
+
+  // Images → resize and compress
+  if (file.type.startsWith('image/')) {
+    const base64 = await resizeImage(file, MAX_DIM, JPEG_QUALITY);
+    return [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64 } }];
+  }
+
+  // Fallback for other file types
+  const base64 = await fileToBase64(file);
+  return [{ type: 'image', source: { type: 'base64', media_type: file.type || 'application/octet-stream', data: base64 } }];
+}
+
+// Resize and compress an image file, returns base64 string
+function resizeImage(file, maxDim, quality) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        const ratio = Math.min(maxDim / width, maxDim / height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL('image/jpeg', quality);
+      resolve(dataUrl.split(',')[1]);
+    };
+    img.src = URL.createObjectURL(file);
+  });
 }
 
 function fileToBase64(file) {
@@ -825,8 +894,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Hide loading, check auth state
   document.getElementById('app-loading').style.display = 'none';
 
-  if (supabase) {
-    supabase.auth.getSession().then(({ data }) => {
+  if (sbClient) {
+    sbClient.auth.getSession().then(({ data }) => {
       if (data.session) {
         APP_STATE.user = data.session.user;
         showApp();
