@@ -387,6 +387,51 @@ function initPortfolio() {
   const modal = document.getElementById('modal-position');
   const form = document.getElementById('position-form');
 
+  // Import positions from JSON
+  document.getElementById('import-portfolio-btn')?.addEventListener('click', () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.addEventListener('change', () => {
+      const file = input.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const data = JSON.parse(reader.result);
+          // Support both { positions: [...] } and raw array [...]
+          const positions = Array.isArray(data) ? data : (data.positions || []);
+          if (!positions.length) {
+            alert('Ingen positioner fundet i filen.');
+            return;
+          }
+          let imported = 0;
+          positions.forEach(p => {
+            if (p.ticker || p.name) {
+              APP_STATE.positions.push({
+                id: p.id || crypto.randomUUID(),
+                ticker: (p.ticker || '').toUpperCase(),
+                name: p.name || p.ticker || '',
+                type: p.type || 'stock',
+                shares: parseFloat(p.shares || p.quantity || 0),
+                avgPrice: parseFloat(p.avgPrice || p.averagePrice || 0),
+                currentPrice: parseFloat(p.currentPrice || p.price || 0),
+              });
+              imported++;
+            }
+          });
+          saveData();
+          renderAll();
+          alert(`${imported} positioner importeret.`);
+        } catch (err) {
+          alert('Kunne ikke læse filen: ' + err.message);
+        }
+      };
+      reader.readAsText(file);
+    });
+    input.click();
+  });
+
   addBtn.addEventListener('click', () => {
     document.getElementById('modal-position-title').textContent = t('modal.addPosition');
     form.reset();
@@ -528,7 +573,14 @@ async function handleScanFile(file) {
             ...imageBlocks,
             {
               type: 'text',
-              text: `Analyze this financial document. Extract all monetary amounts, asset names, and categories. Return ONLY valid JSON (no markdown, no explanation): { "entries": [{ "name": "...", "amount": number, "type": "asset"|"liability", "category": "cash|investment|property|pension|vehicle|other_asset|mortgage|student_loan|car_loan|credit_card|other_liability" }], "positions": [{ "ticker": "...", "name": "...", "type": "stock|etf|fund|bond|crypto|other", "shares": number, "currentPrice": number }] }`
+              text: `Analyze this financial document (likely a bank/broker portfolio report). Extract ONLY the LATEST/MOST RECENT snapshot — do NOT extract historical rows or monthly breakdowns. If there is a table with multiple dates, only use the most recent column.
+
+IMPORTANT RULES:
+1. Only return CURRENT BALANCES — not P/L, returns, deposits, transfers, accruals, or any flows/changes.
+2. Do NOT double-count. If "Account value = Cash + Position Value", only return Cash and Position Value — NOT the total.
+3. Only return items that represent money the person currently HAS (assets) or OWES (liabilities).
+
+Return ONLY valid JSON (no markdown): { "entries": [{ "name": "...", "amount": number, "type": "asset"|"liability", "category": "cash|investment|property|pension|vehicle|other_asset|mortgage|student_loan|car_loan|credit_card|other_liability" }], "positions": [{ "ticker": "...", "name": "...", "type": "stock|etf|fund|bond|crypto|other", "shares": number, "currentPrice": number }] }`
             }
           ]
         }]
@@ -578,9 +630,21 @@ async function prepareFileForScan(file) {
     }
     const arrayBuf = await file.arrayBuffer();
     const pdf = await window.pdfjsLib.getDocument({ data: arrayBuf }).promise;
-    const pages = Math.min(pdf.numPages, 3); // max 3 pages to keep it fast
+    const totalPages = pdf.numPages;
+    // Smart page selection: skip cover/charts, focus on summary + holdings
+    // For Saxo-style reports: pages 2-3 (summary), pages 8+ (holdings with positions)
+    // For shorter docs: just scan all pages
+    let pageNums;
+    if (totalPages <= 6) {
+      pageNums = Array.from({ length: totalPages }, (_, i) => i + 1);
+    } else {
+      // Scan summary (2-3) + holdings section (8 onwards, up to 11)
+      pageNums = [2, 3];
+      for (let p = 8; p <= Math.min(totalPages, 11); p++) pageNums.push(p);
+    }
     const blocks = [];
-    for (let i = 1; i <= pages; i++) {
+    for (const i of pageNums) {
+      if (i > totalPages) continue;
       const page = await pdf.getPage(i);
       const scale = Math.min(MAX_DIM / page.getViewport({ scale: 1 }).width, 2);
       const viewport = page.getViewport({ scale });
