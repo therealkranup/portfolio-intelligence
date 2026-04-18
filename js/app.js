@@ -323,6 +323,11 @@ function loadData() {
     if (entries) APP_STATE.entries = entries;
     if (positions) APP_STATE.positions = positions;
   } catch {}
+  // Migrate: backfill broker/accountType for positions added before this field existed
+  APP_STATE.positions.forEach(p => {
+    if (!p.broker) p.broker = 'saxo';
+    if (!p.accountType) p.accountType = 'free';
+  });
 }
 
 // ── Net Worth Entry Management ──
