@@ -3048,9 +3048,10 @@ SHARES — YOU MUST CALCULATE THIS:
 - NEVER set shares to 0 if you can calculate it. A position with 0 shares is useless.
 
 PRICES:
-- "currentPrice" = the CURRENT/LATEST price PER SINGLE SHARE. Use "Last", "Kurs", "Seneste", "NAV" column. If NOT shown, set to 0.
+- "currentPrice" = the CURRENT/LATEST price PER SINGLE SHARE. Use "Last", "Kurs", "Seneste", "NAV" column. CRITICAL: For mutual funds and index funds, the NAV IS the currentPrice — you MUST set currentPrice to the NAV value, NEVER leave it as 0 when a NAV is visible.
 - "avgPrice" = the average purchase price per share. Use "Open price", "Avg price", "GAK", "Gns. kurs", "Købskurs" column. If NOT shown, set to 0.
 - IMPORTANT: "Open price" in Saxo Bank means the AVERAGE PURCHASE PRICE, not the current price. Put it in "avgPrice", NOT "currentPrice".
+- VERIFICATION: After extracting, check every position. If shares > 0 but currentPrice = 0 and you can see ANY price or NAV for that fund, you MUST set currentPrice to that value.
 
 NORDNET INDEX FUNDS — CRITICAL:
 - Nordnet has proprietary index funds that are NOT on Yahoo Finance. Use these EXACT ticker mappings:
@@ -3078,7 +3079,9 @@ TICKER — VERY IMPORTANT:
 - If the document shows ISINs, you MUST look up and return the correct Yahoo Finance ticker instead
 
 Return ONLY valid JSON (no markdown, no code fences, no explanation). Use this exact schema:
-{"entries":[],"positions":[{"ticker":"MSFT","name":"Microsoft Corp.","type":"stock","shares":17,"currentPrice":0,"avgPrice":390.43,"currency":"USD"}]}` }] }]
+{"entries":[],"positions":[{"ticker":"MSFT","name":"Microsoft Corp.","type":"stock","shares":17,"currentPrice":425.50,"avgPrice":390.43,"currency":"USD","value":7233.5}]}
+
+IMPORTANT: Always include "value" (total market value of the position) AND "currentPrice" (price per share/unit). For funds with NAV shown, currentPrice = NAV. Never return currentPrice as 0 when you can see a price or NAV.` }] }]
           })
         });
         if (!resp.ok) {
@@ -3126,9 +3129,15 @@ Return ONLY valid JSON (no markdown, no code fences, no explanation). Use this e
               if (!p.ticker && !p.name) return;
               let ticker = (p.ticker || p.name || 'UNKNOWN').toUpperCase();
               ticker = TICKER_FIX[ticker] || ticker;
+              // Safety net: if AI returned value but no currentPrice, calculate it
+              let currentPrice = p.currentPrice || 0;
+              if (!currentPrice && p.value && p.shares && p.shares > 0) {
+                currentPrice = p.value / p.shares;
+              }
               APP_STATE.positions.push({
                 ...p, id: crypto.randomUUID(), broker, accountType,
                 ticker,
+                currentPrice,
                 avgPrice: p.avgPrice || 0,
                 currency: p.currency || 'DKK',
                 owner: owner === 'me' ? undefined : owner,
@@ -3286,9 +3295,10 @@ function App() {
   const [authed, setAuthed] = useState(() => {
     // Auto-login if user has saved data (avoid login screen on refresh)
     try {
-      const savedData = localStorage.getItem('pi-data');
+      const savedPositions = localStorage.getItem('pi-positions');
+      const savedEntries = localStorage.getItem('pi-entries');
       const savedPrefs = localStorage.getItem('pi-prefs');
-      if (savedData || savedPrefs) {
+      if (savedPositions || savedEntries || savedPrefs) {
         APP_STATE.user = { email: "demo@portfolio.dk", id: "demo-returning" };
         APP_STATE.demoMode = true;
         window.loadData();

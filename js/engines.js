@@ -61,7 +61,9 @@ async function fetchLivePrices() {
   const positions = APP_STATE.positions;
   if (!positions.length) return { updated: 0, failed: [] };
 
-  const tickers = [...new Set(positions.map(p => p.ticker).filter(Boolean))];
+  // Skip proprietary fund tickers that aren't on Yahoo Finance (e.g. NORDNET_*)
+  const isProprietaryTicker = (t) => /^NORDNET_/.test(t);
+  const tickers = [...new Set(positions.map(p => p.ticker).filter(t => t && !isProprietaryTicker(t)))];
   if (!tickers.length) return { updated: 0, failed: [] };
 
   try {
