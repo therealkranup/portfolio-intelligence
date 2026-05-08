@@ -10,15 +10,10 @@ const { useState, useEffect, useMemo, useCallback, useRef } = React;
 // NAV CONFIG
 // ==========================================================================
 const NAV = [
-  { id: "overview",  icon: "grid",    i18n: "nav.overview" },
-  { id: "networth",  icon: "dollar",  i18n: "nav.networth" },
-  { id: "pension",   icon: "trending", i18n: "nav.pension" },
-  { id: "mortgage",  icon: "briefcase", i18n: "nav.mortgage" },
-  { id: "portfolio", icon: "layers",  i18n: "nav.portfolio" },
-  { id: "overlap",   icon: "overlap", i18n: "nav.overlap" },
-  { id: "score",     icon: "activity",i18n: "nav.score" },
-  { id: "rebalance", icon: "balance", i18n: "nav.rebalance" },
-  { id: "huginn",    icon: "message", i18n: "nav.huginn" },
+  { id: "overview",  icon: "grid",    label: { en: "Overview", da: "Overblik" } },
+  { id: "accounts",  icon: "layers",  label: { en: "Accounts", da: "Konti" } },
+  { id: "huginn",    icon: "message", label: { en: "Huginn", da: "Huginn" } },
+  { id: "settings",  icon: "settings", label: { en: "Settings", da: "Indstillinger" } },
 ];
 
 // ==========================================================================
@@ -146,7 +141,7 @@ const AuthScreen = ({ onLogin }) => {
 // ==========================================================================
 // OVERVIEW
 // ==========================================================================
-const Overview = ({ state, refresh, activeMember, privacyMode }) => {
+const Overview = ({ state, refresh, activeMember, privacyMode, navigateTo, sendQuickAsk }) => {
   const entries = state.entries || [];
   const positions = state.positions || [];
 
@@ -170,11 +165,11 @@ const Overview = ({ state, refresh, activeMember, privacyMode }) => {
   const hasPartnerMember = loadHousehold().some(m => m.relation === 'partner');
   const partnerMember = loadHousehold().find(m => m.relation === 'partner');
   const propSplitPct = useMemo(() => {
-    if (!hasPartnerMember) return 100; // no partner = 100% mine
-    if (isHouseholdView) return 100; // household = full value
+    if (!hasPartnerMember) return 100;
+    if (isHouseholdView) return 100;
     if (activeMember === 'me' || !activeMember) return propertySplit.me ?? 50;
     if (partnerMember && activeMember === partnerMember.id) return 100 - (propertySplit.me ?? 50);
-    return 0; // children don't own property
+    return 0;
   }, [activeMember, isHouseholdView, hasPartnerMember, propertySplit]);
 
   const propertyValue = propertyValueRaw * propSplitPct / 100;
@@ -268,24 +263,140 @@ const Overview = ({ state, refresh, activeMember, privacyMode }) => {
 
   const handleRefreshPrices = useCallback(async () => {
     setPriceLoading(true);
-    setPriceStatus(isEn() ? "Fetching live prices…" : "Henter live kurser…");
+    setPriceStatus(isEn() ? "Fetching live prices..." : "Henter live kurser...");
     try {
       const result = await fetchLivePrices();
       if (result.error) {
-        setPriceStatus("❌ " + result.error);
+        setPriceStatus("! " + result.error);
       } else if (result.updated > 0) {
         const failMsg = result.failed.length ? ` (${result.failed.join(', ')} ${isEn()?'not found':'ikke fundet'})` : '';
-        setPriceStatus(`✓ ${result.updated} ${isEn()?'prices updated':'kurser opdateret'}${failMsg}`);
+        setPriceStatus(`Done: ${result.updated} ${isEn()?'prices updated':'kurser opdateret'}${failMsg}`);
       } else {
         setPriceStatus(isEn() ? "No prices found" : "Ingen kurser fundet");
       }
     } catch(e) {
-      setPriceStatus("❌ " + e.message);
+      setPriceStatus("! " + e.message);
     }
     setPriceLoading(false);
     refresh();
     setTimeout(() => setPriceStatus(""), 8000);
   }, [refresh]);
+
+  // Expandable card state
+  const [expandedCard, setExpandedCard] = useState(null);
+  const toggleCard = (id) => setExpandedCard(prev => prev === id ? null : id);
+
+  // Portfolio health expanded state
+  const [healthExpanded, setHealthExpanded] = useState(false);
+
+  // Quick ask state
+  const [quickAsk, setQuickAsk] = useState("");
+  const handleQuickAsk = () => {
+    const text = quickAsk.trim();
+    if (!text) return;
+    setQuickAsk("");
+    if (sendQuickAsk) sendQuickAsk(text);
+  };
+
+  // Onboarding: check if no positions AND no entries
+  const hasNoData = positions.length === 0 && entries.length === 0;
+
+  // Pension projection for expanded card
+  const pensionProjection = useMemo(() => {
+    if (!window.computePensionProjection) return null;
+    const loadCfg = (key) => {
+      try { return JSON.parse(localStorage.getItem(key)) || {}; } catch { return {}; }
+    };
+    const cfg = loadCfg('pi-pension-config');
+    const monthly = (cfg.monthly || 0);
+    const match = cfg.match || 0;
+    const retire = cfg.retireAge || 67;
+    const age = cfg.currentAge || 39;
+    const scenarios = computePensionProjection(totalPensionSavings, monthly, match, retire, age);
+    if (!scenarios || scenarios.length < 2) return null;
+    const moderate = scenarios[1];
+    return { finalValue: moderate.finalValue, monthlyIncome: Math.round(moderate.finalValue * 0.04 / 12) };
+  }, [totalPensionSavings]);
+
+  // Top 5 positions for expanded investments card
+  const top5Positions = useMemo(() => {
+    return [...positions]
+      .map(p => ({ ...p, valueDKK: toDKK((p.shares||0)*(p.currentPrice||0), p.currency) }))
+      .sort((a, b) => b.valueDKK - a.valueDKK)
+      .slice(0, 5);
+  }, [positions, state.tick]);
+
+  // Cash entries for expanded cash card
+  const cashEntries = useMemo(() => entries.filter(e => e.type === 'asset' && (e.category === 'cash' || e.category === 'savings')), [entries]);
+  const cashTotal = cashEntries.reduce((s, e) => s + (e.amount || 0), 0);
+
+  // Overlap data for health section
+  const overlapData = state.overlapData;
+  const overlapTickers = overlapData?.overlapMatrix ? Object.keys(overlapData.overlapMatrix) : [];
+  const getOverlap = (t1, t2) => {
+    if (!overlapData?.overlapMatrix) return 0;
+    return (overlapData.overlapMatrix[t1]?.[t2]) || (overlapData.overlapMatrix[t2]?.[t1]) || 0;
+  };
+  const getHeatLevel = (val) => val <= 0 ? 0 : val < 10 ? 1 : val < 25 ? 2 : val < 40 ? 3 : 4;
+
+  // Philosophy for score
+  const [activePhilosophy, setActivePhilosophy] = useState(state.philosophy || "bogle");
+  const philosophies = [
+    { id:"bogle", name:"Bogle", tag:"Index", desc: isEn()?"Low cost, broad diversification":"Lav omkostning, bred diversificering" },
+    { id:"buffett", name:"Buffett", tag:"Value", desc: isEn()?"Quality, deep moat, long-term":"Kvalitet, dyb voldgrav, langsigtet" },
+    { id:"dalio", name:"Dalio", tag:"Macro", desc: isEn()?"All-weather, risk parity":"All-weather, risiko-paritet" },
+    { id:"lynch", name:"Lynch", tag:"Growth", desc: isEn()?"Growth at a reasonable price":"Vaekst til rimelig pris (GARP)" },
+  ];
+
+  // Overlap analysis runner
+  const [overlapLoading, setOverlapLoading] = useState(false);
+  const handleRunAnalysis = async () => {
+    if (positions.length < 2) {
+      alert(isEn() ? 'Need at least 2 positions.' : 'Du skal have mindst 2 positioner.');
+      return;
+    }
+    setOverlapLoading(true);
+    try {
+      await runOverlapAnalysis();
+      refresh();
+    } catch(err) { alert(err.message); }
+    setOverlapLoading(false);
+  };
+
+  // Rebalance done state (for health section)
+  const [rebalDone, setRebalDone] = useState({});
+
+  // ── ONBOARDING STATE ──
+  if (hasNoData) {
+    return (
+      <div className="screen active">
+        <div className="page-head">
+          <div>
+            <h1 className="page-title">{isEn() ? <>Welcome to <em>Portfolio Intelligence</em></> : <>Velkommen til <em>Portfolio Intelligence</em></>}</h1>
+            <p className="page-subtitle">{isEn() ? 'Let\'s get your portfolio set up' : 'Lad os komme i gang med din portefolje'}</p>
+          </div>
+        </div>
+
+        <div className="card" style={{textAlign:"center", padding:"48px 32px", maxWidth:560, margin:"40px auto"}}>
+          <div style={{width:72, height:72, borderRadius:20, background:"var(--accent)", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 20px", opacity:0.9}}>
+            <Icon name="upload" size={32} style={{color:"#fff"}}/>
+          </div>
+          <h2 style={{fontFamily:"var(--font-display)", fontSize:24, margin:"0 0 10px"}}>{isEn() ? 'Get started' : 'Kom i gang'}</h2>
+          <p style={{color:"var(--text-muted)", fontSize:14, lineHeight:1.6, maxWidth:380, margin:"0 auto 24px"}}>
+            {isEn() ? 'Import your portfolio from Saxo, Nordnet, or any broker. Upload a screenshot, PDF, or JSON file and our AI will parse your positions.' : 'Importer din portefolje fra Saxo, Nordnet eller en anden magler. Upload et skærmbillede, PDF eller JSON-fil, og vores AI parser dine positioner.'}
+          </p>
+          <button className="btn btn-primary" style={{fontSize:16, padding:"12px 32px"}} onClick={() => navigateTo && navigateTo('import')}>
+            <Icon name="upload" size={16}/> {isEn() ? 'Import your portfolio' : 'Importer din portefolje'}
+          </button>
+          <div style={{marginTop:16}}>
+            <button className="btn btn-ghost" onClick={() => navigateTo && navigateTo('add-position')}>
+              {isEn() ? 'Or add manually' : 'Eller tilføj manuelt'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="screen active">
@@ -315,7 +426,7 @@ const Overview = ({ state, refresh, activeMember, privacyMode }) => {
 
       {priceStatus && <div style={{fontSize:12, color:"var(--text-muted)", marginBottom:12, fontFamily:"var(--font-mono)"}}>{priceStatus}</div>}
 
-      {/* KPI row — Net Worth + Score */}
+      {/* KPI row -- Net Worth + Score */}
       <div className="grid grid-12" style={{marginBottom: 20}}>
         <div className="card col-4 stat">
           <div className="eyebrow">{tl("overview.netWorth")}</div>
@@ -333,21 +444,48 @@ const Overview = ({ state, refresh, activeMember, privacyMode }) => {
           )}
         </div>
 
-        {/* Investments breakdown */}
-        <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => { state.currentView = 'portfolio'; refresh(); }}>
+        {/* Investments breakdown -- expandable */}
+        <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => toggleCard('investments')}>
           <div className="eyebrow"><Icon name="layers" size={12} style={{marginRight:4}}/>{isEn() ? 'Investments' : 'Investeringer'}</div>
           <div className={`value${privacyMode ? ' sensitive' : ''}`} style={{fontSize:26}}>{fmtC(portfolioTotal)}</div>
-          <div style={{display:"flex", flexDirection:"column", gap:4, marginTop:8}}>
-            {Object.entries(investmentBreakdown).sort((a,b)=>b[1]-a[1]).map(([type, val]) => (
-              <div key={type} style={{display:"flex", justifyContent:"space-between", fontSize:11}}>
-                <span style={{color:"var(--text-dim)"}}>{accountLabelsShort[type] || type}</span>
-                <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500}}>{fmtC(val)}</span>
+          {expandedCard !== 'investments' ? (
+            <>
+              <div style={{display:"flex", flexDirection:"column", gap:4, marginTop:8}}>
+                {Object.entries(investmentBreakdown).sort((a,b)=>b[1]-a[1]).map(([type, val]) => (
+                  <div key={type} style={{display:"flex", justifyContent:"space-between", fontSize:11}}>
+                    <span style={{color:"var(--text-dim)"}}>{accountLabelsShort[type] || type}</span>
+                    <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500}}>{fmtC(val)}</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          <div style={{fontSize:10, color:"var(--text-dim)", marginTop:6}}>
-            {positions.filter(p=>p.type==="etf").length} ETFs · {positions.filter(p=>p.type==="stock").length} {isEn()?'stocks':'aktier'} →
-          </div>
+              <div style={{fontSize:10, color:"var(--text-dim)", marginTop:6}}>
+                {positions.filter(p=>p.type==="etf").length} ETFs · {positions.filter(p=>p.type==="stock").length} {isEn()?'stocks':'aktier'} · {isEn() ? 'click to expand' : 'klik for at udvide'}
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Expanded: top 5 positions */}
+              <div style={{marginTop:12, borderTop:"1px solid var(--border)", paddingTop:10}}>
+                <div style={{fontSize:11, fontWeight:600, color:"var(--text-dim)", marginBottom:8, textTransform:"uppercase", letterSpacing:"0.05em"}}>{isEn() ? 'Top 5 positions' : 'Top 5 positioner'}</div>
+                {top5Positions.map((p, idx) => {
+                  const weight = portfolioTotal > 0 ? (p.valueDKK / portfolioTotal * 100) : 0;
+                  return (
+                    <div key={p.id || idx} style={{display:"flex", alignItems:"center", gap:8, padding:"4px 0", fontSize:12}}>
+                      <div className="ticker-mark" style={{background:tickerColor(idx), width:22, height:22, fontSize:8, borderRadius:5}}>{(p.ticker||'??').slice(0,2)}</div>
+                      <span style={{flex:1, fontWeight:500}}>{p.ticker}</span>
+                      <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontSize:11}}>{fmtC(p.valueDKK)}</span>
+                      <span style={{color:"var(--text-dim)", fontFamily:"var(--font-mono)", fontSize:10, minWidth:36, textAlign:"right"}}>{fmtP(weight)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{marginTop:10, textAlign:"center"}}>
+                <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); navigateTo && navigateTo('accounts', 'investments'); }}>
+                  {isEn() ? 'See all' : 'Se alle'} &rarr;
+                </button>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Portfolio Score */}
@@ -367,77 +505,132 @@ const Overview = ({ state, refresh, activeMember, privacyMode }) => {
                 <div style={{color:"var(--text-dim)", fontSize:11}}>{scoreData.philosophyName || 'Bogle'}</div>
               </div>
             </div>
-          ) : <div className="value">—</div>}
+          ) : <div className="value">&mdash;</div>}
         </div>
       </div>
 
-      {/* Row 2 — Pension + Home Equity */}
+      {/* Row 2 -- Pension + Home Equity + Cash (expandable) */}
       <div className="grid grid-12" style={{marginBottom: 20}}>
         {totalPensionSavings > 0 && (
-          <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => { state.currentView = 'pension'; refresh(); }}>
+          <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => toggleCard('pension')}>
             <div className="eyebrow"><Icon name="trending" size={12} style={{marginRight:4}}/>{isEn() ? 'Pension' : 'Pension'}</div>
             <div className={`value${privacyMode ? ' sensitive' : ''}`} style={{fontSize:26}}>{fmtC(totalPensionSavings)}</div>
-            <div style={{display:"flex", flexDirection:"column", gap:4, marginTop:8}}>
-              {pensionLumpSum > 0 && (
-                <div style={{display:"flex", justifyContent:"space-between", fontSize:11}}>
-                  <span style={{color:"var(--text-dim)"}}>{isEn() ? 'Saved' : 'Opsparet'}</span>
-                  <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500}}>{fmtC(pensionLumpSum)}</span>
+            {expandedCard !== 'pension' ? (
+              <>
+                <div style={{display:"flex", flexDirection:"column", gap:4, marginTop:8}}>
+                  {pensionLumpSum > 0 && (
+                    <div style={{display:"flex", justifyContent:"space-between", fontSize:11}}>
+                      <span style={{color:"var(--text-dim)"}}>{isEn() ? 'Saved' : 'Opsparet'}</span>
+                      <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500}}>{fmtC(pensionLumpSum)}</span>
+                    </div>
+                  )}
+                  {pensionTotal > 0 && (
+                    <div style={{display:"flex", justifyContent:"space-between", fontSize:11}}>
+                      <span style={{color:"var(--text-dim)"}}>{isEn() ? 'Accounts' : 'Konti'}</span>
+                      <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500}}>{fmtC(pensionTotal)}</span>
+                    </div>
+                  )}
+                  {pensionMonthly > 0 && (
+                    <div style={{display:"flex", justifyContent:"space-between", fontSize:11}}>
+                      <span style={{color:"var(--text-dim)"}}>{isEn() ? 'Monthly' : 'Maanedlig'}</span>
+                      <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500}}>{fmtC(pensionMonthly)}/md</span>
+                    </div>
+                  )}
                 </div>
-              )}
-              {pensionTotal > 0 && (
-                <div style={{display:"flex", justifyContent:"space-between", fontSize:11}}>
-                  <span style={{color:"var(--text-dim)"}}>{isEn() ? 'Accounts' : 'Konti'}</span>
-                  <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500}}>{fmtC(pensionTotal)}</span>
+                <div style={{fontSize:10, color:"var(--text-dim)", marginTop:6}}>{isEn() ? 'Click to expand' : 'Klik for at udvide'}</div>
+              </>
+            ) : (
+              <>
+                {/* Expanded pension: projection summary + monthly income */}
+                <div style={{marginTop:12, borderTop:"1px solid var(--border)", paddingTop:10}}>
+                  {pensionProjection ? (
+                    <div style={{display:"grid", gap:8}}>
+                      <div style={{display:"flex", justifyContent:"space-between", fontSize:12}}>
+                        <span style={{color:"var(--text-dim)"}}>{isEn() ? 'Projected (moderate)' : 'Fremskrevet (moderat)'}</span>
+                        <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:600, color:"var(--pos)"}}>{fmtC(pensionProjection.finalValue)}</span>
+                      </div>
+                      <div style={{display:"flex", justifyContent:"space-between", fontSize:12}}>
+                        <span style={{color:"var(--text-dim)"}}>{isEn() ? 'Monthly income (4%)' : 'Maanedlig indkomst (4%)'}</span>
+                        <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:600, color:"var(--pos)"}}>{fmtC(pensionProjection.monthlyIncome)}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{fontSize:12, color:"var(--text-dim)"}}>{isEn() ? 'Configure pension settings to see projections' : 'Konfigurer pensionsindstillinger for at se fremskrivninger'}</div>
+                  )}
                 </div>
-              )}
-              {pensionMonthly > 0 && (
-                <div style={{display:"flex", justifyContent:"space-between", fontSize:11}}>
-                  <span style={{color:"var(--text-dim)"}}>{isEn() ? 'Monthly' : 'Månedlig'}</span>
-                  <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500}}>{fmtC(pensionMonthly)}/md</span>
+                <div style={{marginTop:10, textAlign:"center"}}>
+                  <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); navigateTo && navigateTo('accounts', 'pension'); }}>
+                    {isEn() ? 'See all' : 'Se alle'} &rarr;
+                  </button>
                 </div>
-              )}
-            </div>
-            <div style={{fontSize:10, color:"var(--text-dim)", marginTop:6}}>{isEn() ? 'View projections →' : 'Se fremskrivning →'}</div>
+              </>
+            )}
           </div>
         )}
         {propertyValue > 0 && (
-          <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => { state.currentView = 'mortgage'; refresh(); }}>
-            <div className="eyebrow"><Icon name="home" size={12} style={{marginRight:4}}/>{isEn() ? 'Home equity' : 'Friværdi'}{propSplitPct < 100 ? ` (${propSplitPct}%)` : ''}</div>
+          <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => toggleCard('home')}>
+            <div className="eyebrow"><Icon name="home" size={12} style={{marginRight:4}}/>{isEn() ? 'Home equity' : 'Frivaerdi'}{propSplitPct < 100 ? ` (${propSplitPct}%)` : ''}</div>
             <div className={`value${privacyMode ? ' sensitive' : ''}`} style={{fontSize:26, color: homeEquity >= 0 ? "var(--pos)" : "var(--neg)"}}>{fmtC(homeEquity)}</div>
-            <div style={{display:"flex", flexDirection:"column", gap:4, marginTop:8}}>
-              <div style={{display:"flex", justifyContent:"space-between", fontSize:11}}>
-                <span style={{color:"var(--text-dim)"}}>{isEn() ? 'Property' : 'Ejendom'}</span>
-                <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500}}>{fmtC(propertyValue)}</span>
-              </div>
-              <div style={{display:"flex", justifyContent:"space-between", fontSize:11}}>
-                <span style={{color:"var(--text-dim)"}}>{isEn() ? 'Mortgage' : 'Lån'}</span>
-                <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500, color:"var(--neg)"}}>−{fmtC(mortgageBalance)}</span>
-              </div>
-              {isHouseholdView && hasPartnerMember && (
-                <>
-                  <div style={{borderTop: "1px solid var(--border)", marginTop: 4, paddingTop: 4, display:"flex", justifyContent:"space-between", fontSize:10}}>
-                    <span style={{color:"var(--text-dim)"}}>{isEn() ? 'Me' : 'Mig'} ({propertySplit.me ?? 50}%)</span>
-                    <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500}}>{fmtC((propertyValueRaw - mortgageBalanceRaw) * (propertySplit.me ?? 50) / 100)}</span>
+            {expandedCard !== 'home' ? (
+              <>
+                <div style={{display:"flex", flexDirection:"column", gap:4, marginTop:8}}>
+                  <div style={{display:"flex", justifyContent:"space-between", fontSize:11}}>
+                    <span style={{color:"var(--text-dim)"}}>{isEn() ? 'Property' : 'Ejendom'}</span>
+                    <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500}}>{fmtC(propertyValue)}</span>
                   </div>
-                  <div style={{display:"flex", justifyContent:"space-between", fontSize:10}}>
-                    <span style={{color:"var(--text-dim)"}}>{partnerMember?.name} ({100 - (propertySplit.me ?? 50)}%)</span>
-                    <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500}}>{fmtC((propertyValueRaw - mortgageBalanceRaw) * (100 - (propertySplit.me ?? 50)) / 100)}</span>
+                  <div style={{display:"flex", justifyContent:"space-between", fontSize:11}}>
+                    <span style={{color:"var(--text-dim)"}}>{isEn() ? 'Mortgage' : 'Laan'}</span>
+                    <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500, color:"var(--neg)"}}>-{fmtC(mortgageBalance)}</span>
                   </div>
-                </>
-              )}
-            </div>
-            <div style={{fontSize:10, color:"var(--text-dim)", marginTop:6}}>{fmtP(propertyValue > 0 ? (homeEquity/propertyValue*100) : 0, 0)} {isEn() ? 'equity' : 'friværdi'} →</div>
+                  {isHouseholdView && hasPartnerMember && (
+                    <>
+                      <div style={{borderTop: "1px solid var(--border)", marginTop: 4, paddingTop: 4, display:"flex", justifyContent:"space-between", fontSize:10}}>
+                        <span style={{color:"var(--text-dim)"}}>{isEn() ? 'Me' : 'Mig'} ({propertySplit.me ?? 50}%)</span>
+                        <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500}}>{fmtC((propertyValueRaw - mortgageBalanceRaw) * (propertySplit.me ?? 50) / 100)}</span>
+                      </div>
+                      <div style={{display:"flex", justifyContent:"space-between", fontSize:10}}>
+                        <span style={{color:"var(--text-dim)"}}>{partnerMember?.name} ({100 - (propertySplit.me ?? 50)}%)</span>
+                        <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500}}>{fmtC((propertyValueRaw - mortgageBalanceRaw) * (100 - (propertySplit.me ?? 50)) / 100)}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <div style={{fontSize:10, color:"var(--text-dim)", marginTop:6}}>{fmtP(propertyValue > 0 ? (homeEquity/propertyValue*100) : 0, 0)} {isEn() ? 'equity' : 'frivaerdi'} · {isEn() ? 'click to expand' : 'klik for at udvide'}</div>
+              </>
+            ) : (
+              <>
+                {/* Expanded: mortgage breakdown */}
+                <div style={{marginTop:12, borderTop:"1px solid var(--border)", paddingTop:10}}>
+                  <div style={{display:"grid", gap:8}}>
+                    <div style={{display:"flex", justifyContent:"space-between", fontSize:12}}>
+                      <span style={{color:"var(--text-dim)"}}>{isEn() ? 'Property value' : 'Ejendomsvaerdi'}</span>
+                      <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500}}>{fmtC(propertyValue)}</span>
+                    </div>
+                    <div style={{display:"flex", justifyContent:"space-between", fontSize:12}}>
+                      <span style={{color:"var(--text-dim)"}}>{isEn() ? 'Mortgage balance' : 'Laanssaldo'}</span>
+                      <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500, color:"var(--neg)"}}>-{fmtC(mortgageBalance)}</span>
+                    </div>
+                    <div style={{display:"flex", justifyContent:"space-between", fontSize:12}}>
+                      <span style={{color:"var(--text-dim)"}}>LTV</span>
+                      <span style={{fontFamily:"var(--font-mono)", fontWeight:500}}>{propertyValue > 0 ? (mortgageBalance / propertyValue * 100).toFixed(1) : 0}%</span>
+                    </div>
+                  </div>
+                </div>
+                <div style={{marginTop:10, textAlign:"center"}}>
+                  <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); navigateTo && navigateTo('accounts', 'property'); }}>
+                    {isEn() ? 'See all' : 'Se alle'} &rarr;
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
-        {/* Cash & other liquid */}
-        {(() => {
-          const cashEntries = entries.filter(e => e.type === 'asset' && (e.category === 'cash' || e.category === 'savings'));
-          const cashTotal = cashEntries.reduce((s, e) => s + (e.amount || 0), 0);
-          if (cashTotal <= 0) return null;
-          return (
-            <div className="card col-4 stat">
-              <div className="eyebrow"><Icon name="dollar" size={12} style={{marginRight:4}}/>{isEn() ? 'Cash & Savings' : 'Kontant & Opsparing'}</div>
-              <div className={`value${privacyMode ? ' sensitive' : ''}`} style={{fontSize:26}}>{fmtC(cashTotal)}</div>
+        {/* Cash & other liquid -- expandable */}
+        {cashTotal > 0 && (
+          <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => toggleCard('cash')}>
+            <div className="eyebrow"><Icon name="dollar" size={12} style={{marginRight:4}}/>{isEn() ? 'Cash & Savings' : 'Kontant & Opsparing'}</div>
+            <div className={`value${privacyMode ? ' sensitive' : ''}`} style={{fontSize:26}}>{fmtC(cashTotal)}</div>
+            {expandedCard !== 'cash' ? (
               <div style={{display:"flex", flexDirection:"column", gap:4, marginTop:8}}>
                 {cashEntries.slice(0, 3).map((e, i) => (
                   <div key={i} style={{display:"flex", justifyContent:"space-between", fontSize:11}}>
@@ -446,9 +639,26 @@ const Overview = ({ state, refresh, activeMember, privacyMode }) => {
                   </div>
                 ))}
               </div>
-            </div>
-          );
-        })()}
+            ) : (
+              <>
+                {/* Expanded: all cash accounts */}
+                <div style={{marginTop:12, borderTop:"1px solid var(--border)", paddingTop:10}}>
+                  {cashEntries.map((e, i) => (
+                    <div key={i} style={{display:"flex", justifyContent:"space-between", fontSize:12, padding:"4px 0"}}>
+                      <span style={{color:"var(--text-dim)"}}>{e.name}</span>
+                      <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily:"var(--font-mono)", fontWeight:500}}>{fmtC(e.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{marginTop:10, textAlign:"center"}}>
+                  <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); navigateTo && navigateTo('accounts', 'assets'); }}>
+                    {isEn() ? 'See all' : 'Se alle'} &rarr;
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Sector allocation + Broker breakdown */}
@@ -486,7 +696,7 @@ const Overview = ({ state, refresh, activeMember, privacyMode }) => {
                 return (
                   <div key={i}>
                     <div style={{display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:6}}>
-                      <span><strong>{brokerLabels[g.broker]||g.broker||'—'}</strong> — {accountLabels[g.accountType]||g.accountType||'—'}</span>
+                      <span><strong>{brokerLabels[g.broker]||g.broker||'--'}</strong> -- {accountLabels[g.accountType]||g.accountType||'--'}</span>
                       <span className={`num${privacyMode ? ' sensitive' : ''}`} style={{fontSize:12}}>{fmtC(g.total)} <span style={{opacity:0.6}}>({fmtP(pct, 0)})</span></span>
                     </div>
                     <div style={{height:8, background:"var(--bg-sunk)", borderRadius:999, overflow:"hidden"}}>
@@ -501,150 +711,244 @@ const Overview = ({ state, refresh, activeMember, privacyMode }) => {
         )}
       </div>
 
-      {/* Actions */}
-      {suggestions.length > 0 && (
-        <div style={{marginTop:20}} className="card">
-          <div className="card-head">
-            <h3 className="card-title">{isEn() ? "Actions to consider" : "Handlinger at overveje"}</h3>
+      {/* Portfolio Health Section */}
+      {positions.length > 0 && (
+        <div className="card" style={{marginTop:20}}>
+          <div className="card-head" style={{cursor:"pointer"}} onClick={() => setHealthExpanded(!healthExpanded)}>
+            <h3 className="card-title"><Icon name="activity" size={15} style={{marginRight:6, opacity:0.6}}/>{isEn() ? 'Portfolio Health' : 'Portefoljesundhed'}</h3>
+            <div style={{display:"flex", alignItems:"center", gap:12}}>
+              {scoreData && <span style={{fontFamily:"var(--font-mono)", fontSize:13, fontWeight:600}}>{scoreData.total}/100</span>}
+              <Icon name={healthExpanded ? "chevron-up" : "chevron"} size={14} style={{opacity:0.5, transform: healthExpanded ? 'rotate(180deg)' : 'rotate(90deg)'}}/>
+            </div>
           </div>
-          <div style={{display:"grid", gap:12}}>
-            {suggestions.slice(0, 3).map((s, i) => (
-              <div key={i} className={"insight " + (s.priority==="high"?"alert":s.priority==="medium"?"warn":"good")}>
-                <div className="insight-icon"><Icon name={s.type==="warning"?"alert":s.type==="tax"?"tax":s.type==="risk"?"pie":"overlap"} size={18}/></div>
-                <div className="insight-body">
-                  <div className="insight-title">{s.title} <span className={"severity " + (s.priority==="high"?"high":s.priority==="medium"?"med":"low")}>{s.priority}</span></div>
-                  <div className="insight-text">{s.detail}</div>
+
+          {/* Compact summary */}
+          {!healthExpanded && (
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginTop:4}}>
+              {/* Score gauge mini */}
+              <div style={{display:"flex", alignItems:"center", gap:10}}>
+                {scoreData ? (
+                  <>
+                    <svg width="44" height="44" viewBox="0 0 72 72">
+                      <circle cx="36" cy="36" r="28" stroke="var(--bg-sunk)" strokeWidth="5" fill="none"/>
+                      <circle cx="36" cy="36" r="28" stroke="var(--accent)" strokeWidth="5" fill="none"
+                        strokeDasharray={`${2*Math.PI*28*(scoreData.total/100)} 999`} strokeLinecap="round"
+                        transform="rotate(-90 36 36)"/>
+                      <text x="36" y="42" textAnchor="middle" fontFamily="var(--font-display)" fontSize="22" fill="var(--text)">{scoreData.total}</text>
+                    </svg>
+                    <div>
+                      <div style={{fontWeight:600, fontSize:12}}>{scoreData.label}</div>
+                      <div style={{fontSize:10, color:"var(--text-dim)"}}>{isEn() ? 'Score' : 'Score'}</div>
+                    </div>
+                  </>
+                ) : <div style={{fontSize:12, color:"var(--text-dim)"}}>{isEn() ? 'Run analysis first' : 'Kor analyse forst'}</div>}
+              </div>
+
+              {/* Top 3 suggestions */}
+              <div>
+                <div style={{fontSize:10, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", marginBottom:6}}>{isEn() ? 'Top actions' : 'Top-handlinger'}</div>
+                {suggestions.slice(0, 3).map((s, i) => (
+                  <div key={i} style={{fontSize:11, color:"var(--text-muted)", padding:"2px 0", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>
+                    <span style={{color: s.priority==="high" ? "var(--neg)" : s.priority==="medium" ? "var(--accent)" : "var(--text-dim)", marginRight:4}}>*</span>
+                    {s.title}
+                  </div>
+                ))}
+                {suggestions.length === 0 && <div style={{fontSize:11, color:"var(--text-dim)"}}>{isEn() ? 'No actions' : 'Ingen handlinger'}</div>}
+              </div>
+
+              {/* Overlap heatmap preview */}
+              <div>
+                <div style={{fontSize:10, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", marginBottom:6}}>{isEn() ? 'Overlap' : 'Overlap'}</div>
+                {overlapTickers.length > 0 ? (
+                  <div style={{display:"grid", gridTemplateColumns:`repeat(${Math.min(overlapTickers.length, 6)}, 1fr)`, gap:2, maxWidth:120}}>
+                    {overlapTickers.slice(0, 6).map((row, i) =>
+                      overlapTickers.slice(0, 6).map((col, j) => {
+                        if (i === j) return <div key={`${i}-${j}`} style={{width:"100%", paddingBottom:"100%", background:"var(--bg-sunk)", borderRadius:2}}/>;
+                        const val = getOverlap(row, col);
+                        const level = getHeatLevel(val);
+                        const bg = level===0?"var(--bg-sunk)":level===1?"oklch(0.95 0.04 55)":level===2?"oklch(0.88 0.09 55)":level===3?"oklch(0.78 0.14 50)":"oklch(0.64 0.17 48)";
+                        return <div key={`${i}-${j}`} style={{width:"100%", paddingBottom:"100%", background:bg, borderRadius:2}} title={`${row} x ${col}: ${val.toFixed(0)}%`}/>;
+                      })
+                    )}
+                  </div>
+                ) : (
+                  <div style={{fontSize:11, color:"var(--text-dim)"}}>{isEn() ? 'Run analysis' : 'Kor analyse'}</div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Expanded: full content */}
+          {healthExpanded && (
+            <div style={{marginTop:16}}>
+              {/* Philosophy picker */}
+              <div style={{marginBottom:20}}>
+                <div className="eyebrow" style={{marginBottom:10}}>{tl("score.choosePhilosophy")}</div>
+                <div className="philosophies">
+                  {philosophies.map(ph => (
+                    <button key={ph.id} className={"philosophy " + (activePhilosophy===ph.id?"active":"")} onClick={()=>{setActivePhilosophy(ph.id); APP_STATE.philosophy=ph.id; window.savePreferences(); refresh();}}>
+                      <div className="p-head">
+                        <div className="p-name">{ph.name}</div>
+                        <span className="p-tag">{ph.tag}</span>
+                      </div>
+                      <div className="p-desc">{ph.desc}</div>
+                    </button>
+                  ))}
                 </div>
               </div>
-            ))}
-          </div>
+
+              {/* Score breakdown */}
+              {scoreData && (
+                <div className="grid grid-12" style={{marginBottom:20}}>
+                  <div className="card col-5" style={{border:"none", boxShadow:"none", background:"transparent", padding:0}}>
+                    <div className="gauge-wrap">
+                      <Gauge value={scoreData.total} max={100} size={220}/>
+                    </div>
+                    <div style={{marginTop:8, padding:10, background:"var(--bg-raised)", borderRadius:"var(--r-md)", fontSize:12, color:"var(--text-muted)", textAlign:"center"}}>
+                      <strong style={{color:"var(--text)"}}>{scoreData.label}.</strong> {philosophies.find(p=>p.id===activePhilosophy)?.desc}
+                    </div>
+                  </div>
+                  <div className="col-7" style={{padding:0}}>
+                    <div style={{display:"grid", gap:14}}>
+                      {Object.values(scoreData.scores).map((r, i) => {
+                        const pct = r.score / r.max * 100;
+                        const tone = pct >= 70 ? "strong" : pct < 40 ? "weak" : "";
+                        return (
+                          <div key={i} className="sbr-col">
+                            <div className="sbr-head">
+                              <div className="sbr-title">{r.label}</div>
+                              <div className="sbr-val"><strong style={{color:"var(--text)", fontSize:13}}>{r.score}</strong> / {r.max}</div>
+                            </div>
+                            <div className="sbr-track">
+                              <div className={"sbr-fill " + tone} style={{width: pct+"%"}}/>
+                            </div>
+                            <div className="sbr-note">{r.detail}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Overlap matrix */}
+              {overlapTickers.length > 0 ? (
+                <div style={{marginBottom:20}}>
+                  <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12}}>
+                    <h4 style={{margin:0, fontSize:14}}>{tl("overlap.matrix")}</h4>
+                    <div style={{display:"flex", alignItems:"center", gap:6, fontSize:11, color:"var(--text-muted)"}}>
+                      <span>{isEn()?'Low':'Lav'}</span>
+                      <div style={{display:"flex", gap:2}}>
+                        {[0,1,2,3,4].map(v => <div key={v} style={{width:14, height:14, borderRadius:3,
+                          background: v===0?"var(--bg-sunk)":v===1?"oklch(0.95 0.04 55)":v===2?"oklch(0.88 0.09 55)":v===3?"oklch(0.78 0.14 50)":"oklch(0.64 0.17 48)"}}/>)}
+                      </div>
+                      <span>{isEn()?'High':'Hoj'}</span>
+                    </div>
+                  </div>
+                  <div className="matrix-wrap">
+                    <table className="matrix">
+                      <thead>
+                        <tr>
+                          <th></th>
+                          {overlapTickers.map(t => <th key={t} style={{writingMode:"vertical-rl", transform:"rotate(180deg)", height:80}}>{t}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {overlapTickers.map((row, i) => (
+                          <tr key={row}>
+                            <th className="row-head">{row}</th>
+                            {overlapTickers.map((col, j) => {
+                              if (i === j) return <td key={j} className="diag">&mdash;</td>;
+                              const val = getOverlap(row, col);
+                              const level = getHeatLevel(val);
+                              return (
+                                <td key={j} data-v={level} style={{fontSize:10}} title={`${row} x ${col}: ${val.toFixed(1)}%`}>
+                                  {val <= 0 ? "." : val.toFixed(0)+"%"}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div style={{textAlign:"center", padding:"20px 0", marginBottom:16}}>
+                  <button className="btn btn-accent" onClick={handleRunAnalysis} disabled={overlapLoading}>
+                    <Icon name="play" size={15}/> {overlapLoading ? (isEn()?'Analyzing...':'Analyserer...') : tl("overlap.runAnalysis")}
+                  </button>
+                </div>
+              )}
+
+              {/* Rebalance items */}
+              {suggestions.length > 0 && (
+                <div>
+                  <h4 style={{margin:"0 0 12px", fontSize:14}}>{isEn() ? 'Rebalance suggestions' : 'Rebalanceringsforslag'}</h4>
+                  <div style={{display:"grid", gap:10}}>
+                    {suggestions.map((s, i) => (
+                      <div key={i} className={"insight " + (s.priority==="high"?"alert":s.priority==="medium"?"warn":"good")} style={{opacity: rebalDone[i]?0.5:1}}>
+                        <div className="insight-icon"><Icon name={s.type==="warning"?"alert":s.type==="tax"?"tax":s.type==="risk"?"pie":"overlap"} size={18}/></div>
+                        <div className="insight-body">
+                          <div className="insight-title">
+                            {s.title}
+                            <span className={"severity " + (s.priority==="high"?"high":s.priority==="medium"?"med":"low")}>{s.priority}</span>
+                          </div>
+                          <div className="insight-text">{s.detail}</div>
+                          <div style={{marginTop:8}}>
+                            <button className="btn btn-sm btn-ghost" onClick={()=>setRebalDone({...rebalDone, [i]:!rebalDone[i]})}>
+                              <Icon name="check" size={13}/> {rebalDone[i]?(isEn()?'Done':'Faerdig'):(isEn()?'Mark done':'Marker faerdig')}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
-    </div>
-  );
-};
 
-// ==========================================================================
-// NET WORTH
-// ==========================================================================
-const NetWorthScreen = ({ state, refresh, openModal, privacyMode }) => {
-  const entries = state.entries || [];
-  const assets = entries.filter(e => e.type === 'asset');
-  const liabilities = entries.filter(e => e.type === 'liability');
-  const totalA = assets.reduce((s,e)=>s+e.amount, 0);
-  const totalL = liabilities.reduce((s,e)=>s+e.amount, 0);
-  const net = totalA - totalL;
-
-  const deleteEntry = (id) => {
-    APP_STATE.entries = APP_STATE.entries.filter(e => e.id !== id);
-    window.saveData();
-    if (window.syncPortfolioToNetWorth) syncPortfolioToNetWorth();
-    refresh();
-  };
-
-  return (
-    <div className="screen active">
-      <div className="page-head">
-        <div>
-          <h1 className="page-title">{isEn() ? <>Net <em>Worth</em></> : <><em>Formue</em></>}</h1>
-          <p className="page-subtitle">{tl("networth.subtitle")}</p>
-        </div>
-        <div className="page-actions">
-          <button className="btn btn-accent" onClick={() => openModal('entry')}>
-            <Icon name="plus" size={15}/> {tl("networth.addEntry")}
+      {/* Quick ask bar for Huginn */}
+      <div style={{marginTop:20, position:"relative"}}>
+        <div style={{
+          display:"flex", alignItems:"center", gap:10,
+          background:"var(--bg-card)", borderRadius:16,
+          border:"1px solid var(--border)", padding:"8px 8px 8px 16px",
+        }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0, opacity:0.7}}>
+            <path d="M4 19c0-3 2-6 6-8l2-1c2-1 4-3 5-5l1-2s1 3-1 6c0 0 3-1 4 1s-1 4-3 5l-3 2c-2 1-4 3-5 5l-1 2"/>
+            <circle cx="15" cy="7" r="0.8" fill="currentColor" stroke="none"/>
+          </svg>
+          <input
+            value={quickAsk}
+            onChange={e => setQuickAsk(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleQuickAsk(); }}}
+            placeholder={isEn() ? "Quick ask Huginn about your portfolio..." : "Sporg Huginn hurtigt om din portefolje..."}
+            style={{
+              flex:1, border:"none", outline:"none", background:"transparent",
+              color:"var(--text)", fontSize:13, padding:"6px 0", fontFamily:"inherit",
+            }}
+          />
+          <button
+            onClick={handleQuickAsk}
+            disabled={!quickAsk.trim()}
+            style={{
+              width:34, height:34, borderRadius:10,
+              background: quickAsk.trim() ? "var(--accent)" : "var(--bg-sunk)",
+              border:"none", cursor: quickAsk.trim() ? "pointer" : "default",
+              display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={quickAsk.trim() ? "#fff" : "var(--text-dim)"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/>
+            </svg>
           </button>
         </div>
-      </div>
-
-      <div className="waterfall" style={{marginBottom:20}}>
-        <div className="wf-col assets">
-          <span className="eyebrow">{tl("networth.assets")}</span>
-          <div className={`big${privacyMode ? ' sensitive' : ''}`} style={{color:"var(--pos)"}}>{fmtC(totalA)}</div>
-          <div style={{marginTop:8, fontSize:12, color:"var(--text-muted)"}}>{assets.length} {isEn()?'accounts':'konti'}</div>
-        </div>
-        <div className="wf-col liab">
-          <span className="eyebrow">{tl("networth.liabilities")}</span>
-          <div className={`big${privacyMode ? ' sensitive' : ''}`} style={{color: totalL>0?"var(--neg)":"var(--text)"}}>− {fmtC(totalL)}</div>
-          <div style={{marginTop:8, fontSize:12, color:"var(--text-muted)"}}>{liabilities.length} {isEn()?'obligations':'forpligtelser'}</div>
-        </div>
-        <div className="wf-col net">
-          <span className="eyebrow">{tl("networth.netWorth")}</span>
-          <div className={`big${privacyMode ? ' sensitive' : ''}`}>{fmtC(net)}</div>
-        </div>
-      </div>
-
-      <div className="grid grid-2">
-        <div className="card">
-          <div className="card-head">
-            <div>
-              <h3 className="card-title">{tl("networth.assets")}</h3>
-              <div style={{fontSize:12, color:"var(--text-dim)", marginTop:4}}>{assets.length} {isEn()?'accounts':'konti'}</div>
-            </div>
-            <button className="btn btn-sm" onClick={()=>openModal('entry', {type:'asset'})}>
-              <Icon name="plus" size={14}/> {isEn()?'Add':'Tilføj'}
-            </button>
-          </div>
-          {assets.length === 0 ? <div style={{color:"var(--text-dim)", fontSize:13}}>{tl("networth.noAssets")}</div> :
-            assets.map(a => {
-              const catLabels = { cash: isEn()?'Bank account':'Bankkonto', savings: isEn()?'Savings':'Opsparing', investment: isEn()?'Investment':'Investering', property: isEn()?'Property':'Ejendom', pension: 'Pension', vehicle: isEn()?'Vehicle':'Køretøj', other_asset: isEn()?'Other':'Andet' };
-              const catIcons = { cash:'dollar', savings:'shield', investment:'trending', property:'home', pension:'briefcase', vehicle:'zap', other_asset:'briefcase' };
-              return (
-                <div key={a.id} className="line-row">
-                  <div className="line-mark"><Icon name={a.autoSynced?"zap":(catIcons[a.category]||"dollar")}/></div>
-                  <div style={{flex:1, minWidth:0}}>
-                    <div className="line-name">{a.name}</div>
-                    <div className="line-sub">
-                      {catLabels[a.category]||a.category}
-                      {a.interestRate ? ` · ${a.interestRate}%` : ''}
-                      {a.notes ? ` · ${a.notes}` : ''}
-                      {a.autoSynced ? (isEn()?' · Auto-synced':' · Auto-synkroniseret') : ''}
-                    </div>
-                  </div>
-                  <div className={`line-val${privacyMode ? ' sensitive' : ''}`} style={{color:"var(--pos)"}}>{fmtC(a.amount)}</div>
-                  <div className="line-actions">
-                    <button className="icon-btn" style={{width:28, height:28}} onClick={()=>openModal('entry', a)}><Icon name="edit" size={13}/></button>
-                    <button className="icon-btn" style={{width:28, height:28}} onClick={()=>deleteEntry(a.id)}><Icon name="trash" size={13}/></button>
-                  </div>
-                </div>
-              );
-            })
-          }
-        </div>
-
-        <div className="card">
-          <div className="card-head">
-            <div>
-              <h3 className="card-title">{tl("networth.liabilities")}</h3>
-              <div style={{fontSize:12, color:"var(--text-dim)", marginTop:4}}>{liabilities.length} {isEn()?'active':'aktive'}</div>
-            </div>
-            <button className="btn btn-sm" onClick={()=>openModal('entry', {type:'liability'})}>
-              <Icon name="plus" size={14}/> {isEn()?'Add':'Tilføj'}
-            </button>
-          </div>
-          {liabilities.length === 0 ? <div style={{color:"var(--text-dim)", fontSize:13}}>{tl("networth.noLiabilities")}</div> :
-            liabilities.map(a => {
-              const catLabels = { mortgage: isEn()?'Mortgage':'Realkreditlån', student_loan: isEn()?'Student loan':'Studielån', car_loan: isEn()?'Car loan':'Billån', credit_card: isEn()?'Credit card':'Kreditkort', other_liability: isEn()?'Other':'Andet' };
-              const catIcons = { mortgage:'home', student_loan:'edit', car_loan:'zap', credit_card:'alert', other_liability:'briefcase' };
-              return (
-                <div key={a.id} className="line-row">
-                  <div className="line-mark"><Icon name={catIcons[a.category]||"briefcase"}/></div>
-                  <div style={{flex:1, minWidth:0}}>
-                    <div className="line-name">{a.name}</div>
-                    <div className="line-sub">
-                      {catLabels[a.category]||a.category}
-                      {a.interestRate ? ` · ${a.interestRate}%` : ''}
-                      {a.notes ? ` · ${a.notes}` : ''}
-                    </div>
-                  </div>
-                  <div className={`line-val${privacyMode ? ' sensitive' : ''}`} style={{color:"var(--neg)"}}>− {fmtC(a.amount)}</div>
-                  <div className="line-actions">
-                    <button className="icon-btn" style={{width:28, height:28}} onClick={()=>openModal('entry', a)}><Icon name="edit" size={13}/></button>
-                    <button className="icon-btn" style={{width:28, height:28}} onClick={()=>deleteEntry(a.id)}><Icon name="trash" size={13}/></button>
-                  </div>
-                </div>
-              );
-            })
-          }
+        <div style={{fontSize:10, color:"var(--text-dim)", opacity:0.5, textAlign:"center", marginTop:4}}>
+          {isEn() ? 'Press Enter to ask Huginn' : 'Tryk Enter for at sporge Huginn'}
         </div>
       </div>
     </div>
@@ -652,865 +956,79 @@ const NetWorthScreen = ({ state, refresh, openModal, privacyMode }) => {
 };
 
 // ==========================================================================
-// PENSION
+// ACCOUNTS SCREEN (Unified: Investments + Assets & Liabilities + Pension + Property)
 // ==========================================================================
-const PensionScreen = ({ state, refresh, openModal, activeMember, privacyMode }) => {
-  const isHousehold = activeMember === 'household';
-  const pensionEntries = (state.entries || []).filter(e => e.category === 'pension');
-  const currentPension = pensionEntries.reduce((s, e) => s + (e.amount || 0), 0);
+const AccountsScreen = ({ state, refresh, openModal, privacyMode, household, activeMember, initialTab }) => {
+  const [activeTab, setActiveTab] = useState(initialTab || "investments");
 
-  // Per-member pension config key
-  const configKey = activeMember && activeMember !== 'me' && activeMember !== 'household'
-    ? `pi-pension-config-${activeMember}` : 'pi-pension-config';
-  const defaults = { monthly: 2000, match: 0, currentAge: 39, retireAge: 67, lumpSum: 0 };
-
-  // For household view, aggregate all members' configs
-  const householdMembers = useMemo(() => loadHousehold(), []);
-  const aggregatedConfig = useMemo(() => {
-    if (!isHousehold) return null;
-    const loadCfg = (key) => {
-      try { return { ...defaults, ...(JSON.parse(localStorage.getItem(key)) || {}) }; } catch { return defaults; }
-    };
-    const myCfg = loadCfg('pi-pension-config');
-    const allCfgs = [{ label: 'Me', cfg: myCfg }];
-    householdMembers.forEach(m => {
-      allCfgs.push({ label: m.name, cfg: loadCfg(`pi-pension-config-${m.id}`) });
-    });
-    // Aggregate: sum lumpSum & monthly, use youngest age & latest retire age
-    const totalLump = allCfgs.reduce((s, c) => s + (c.cfg.lumpSum || 0), 0);
-    const totalMonthly = allCfgs.reduce((s, c) => s + (c.cfg.monthly || 0) * (1 + (c.cfg.match || 0) / 100), 0);
-    const youngestAge = Math.min(...allCfgs.map(c => c.cfg.currentAge || 39));
-    const latestRetire = Math.max(...allCfgs.map(c => c.cfg.retireAge || 67));
-    return { lumpSum: totalLump, monthly: totalMonthly, match: 0, currentAge: youngestAge, retireAge: latestRetire, members: allCfgs };
-  }, [isHousehold, householdMembers]);
-
-  const [config, setConfig] = useState(() => {
-    if (isHousehold && aggregatedConfig) return { ...defaults, ...aggregatedConfig };
-    try { return { ...defaults, ...(JSON.parse(localStorage.getItem(configKey)) || {}) }; } catch { return defaults; }
-  });
-  const [activeScenario, setActiveScenario] = useState(1); // 0=conservative, 1=moderate, 2=aggressive
-  const [hoverYear, setHoverYear] = useState(null);
-
-  const updateConfig = (key, val) => {
-    if (isHousehold) return; // read-only in household view
-    const next = { ...config, [key]: parseFloat(val) || 0 };
-    setConfig(next);
-    try { localStorage.setItem(configKey, JSON.stringify(next)); } catch {}
-  };
-
-  const effectiveConfig = isHousehold && aggregatedConfig ? aggregatedConfig : config;
-  const yearsToRetire = Math.max(0, (effectiveConfig.retireAge || 67) - (effectiveConfig.currentAge || 30));
-  const totalMonthlyWithMatch = isHousehold ? (aggregatedConfig?.monthly || 0) : (config.monthly || 0) * (1 + (config.match || 0) / 100);
-  const totalCurrentPension = currentPension + (effectiveConfig.lumpSum || 0);
-
-  const scenarios = useMemo(() =>
-    window.computePensionProjection
-      ? computePensionProjection(totalCurrentPension,
-          isHousehold ? totalMonthlyWithMatch : config.monthly,
-          isHousehold ? 0 : config.match,
-          effectiveConfig.retireAge, effectiveConfig.currentAge)
-      : [],
-    [totalCurrentPension, config.monthly, config.match, effectiveConfig.retireAge, effectiveConfig.currentAge, totalMonthlyWithMatch, isHousehold]
-  );
-
-  const scenarioColors = ["oklch(0.60 0.14 45)", "oklch(0.55 0.16 145)", "oklch(0.55 0.14 265)"];
-  const scenarioNames = ["Conservative", "Moderate", "Aggressive"];
-  const scenarioNamesDa = ["Konservativ", "Moderat", "Aggressiv"];
-  const scenarioIcons = ["shield", "target", "zap"];
-
-  const maxVal = scenarios.length ? Math.max(...scenarios.flatMap(s => s.points.map(p => p.value))) : 0;
-  const chartW = 640, chartH = 260, padL = 70, padR = 20, padT = 24, padB = 36;
-  const plotW = chartW - padL - padR, plotH = chartH - padT - padB;
-
-  // Monthly retirement income (4% rule)
-  const monthlyIncome = scenarios.length > 0 ? Math.round(scenarios[activeScenario].finalValue * 0.04 / 12) : 0;
-
-  // Input field style — larger, properly sized
-  const inputStyle = {
-    width: "100%", padding: "10px 14px", borderRadius: 10,
-    border: "1px solid var(--border)", background: "var(--bg-sunk)",
-    color: "var(--text)", fontFamily: "var(--font-mono)", fontSize: 16,
-    fontWeight: 500, textAlign: "right", outline: "none",
-    transition: "border-color 0.2s",
-  };
-  const labelStyle = { fontSize: 12, color: "var(--text-dim)", marginBottom: 6, display: "block", fontWeight: 500 };
+  // Update tab when initialTab changes (from nav)
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab);
+  }, [initialTab]);
 
   return (
     <div className="screen active">
       <div className="page-head">
         <div>
-          <h1 className="page-title">{isEn() ? <><em>Pension</em> planner</> : <><em>Pensions</em>planlægger</>}</h1>
-          <p className="page-subtitle">{isEn() ? 'Project your retirement savings' : 'Fremskriv din pensionsopsparing'}</p>
+          <h1 className="page-title">{isEn() ? <><em>Accounts</em></> : <><em>Konti</em></>}</h1>
+          <p className="page-subtitle">{isEn() ? 'Your complete financial picture' : 'Dit samlede oekonomiske billede'}</p>
         </div>
-      </div>
-
-      {/* Hero KPI row */}
-      <div className="grid grid-12" style={{marginBottom: 24}}>
-        <div className="card col-3 stat">
-          <div className="eyebrow">{isEn() ? 'Current pension' : 'Nuværende pension'}</div>
-          <div className="value" style={{fontSize: 28}}>{fmtC(totalCurrentPension)}</div>
-          <div style={{fontSize: 11, color: "var(--text-dim)", marginTop: 4}}>
-            {totalCurrentPension > 0 ? (isEn() ? 'starting balance' : 'startsaldo') : (isEn() ? 'set below ↓' : 'indstil nedenfor ↓')}
-          </div>
-        </div>
-        <div className="card col-3 stat">
-          <div className="eyebrow">{isEn() ? 'Years to retirement' : 'År til pension'}</div>
-          <div className="value" style={{fontSize: 28}}>{yearsToRetire}</div>
-          <div style={{fontSize: 11, color: "var(--text-dim)", marginTop: 4}}>
-            {isEn() ? `Age ${effectiveConfig.currentAge} → ${effectiveConfig.retireAge}` : `Alder ${effectiveConfig.currentAge} → ${effectiveConfig.retireAge}`}
-          </div>
-        </div>
-        <div className="card col-3 stat">
-          <div className="eyebrow">{isEn() ? 'Monthly savings' : 'Månedlig opsparing'}</div>
-          <div className={`value${privacyMode ? ' sensitive' : ''}`} style={{fontSize: 28}}>{fmtC(totalMonthlyWithMatch)}</div>
-          <div style={{fontSize: 11, color: "var(--text-dim)", marginTop: 4}}>
-            {config.match > 0 ? (isEn() ? `incl. ${config.match}% match` : `inkl. ${config.match}% match`) : (isEn() ? 'your contribution' : 'dit bidrag')}
-          </div>
-        </div>
-        <div className="card col-3 stat">
-          <div className="eyebrow">{isEn() ? 'Est. monthly income' : 'Est. månedlig indkomst'}</div>
-          <div className={`value${privacyMode ? ' sensitive' : ''}`} style={{fontSize: 28, color: "var(--pos)"}}>{fmtC(monthlyIncome)}</div>
-          <div style={{fontSize: 11, color: "var(--text-dim)", marginTop: 4}}>
-            {isEn() ? '4% withdrawal rule' : '4% udtrækningsregel'}
-          </div>
-        </div>
-      </div>
-
-      {/* Settings card — wider inputs with sliders for ages (or member breakdown for household) */}
-      <div className="card" style={{marginBottom: 24}}>
-        <div className="card-head">
-          <h3 className="card-title"><Icon name="sliders" size={15} style={{marginRight: 6, opacity: 0.5}}/>{isHousehold ? (isEn() ? 'Household breakdown' : 'Husstandsoversigt') : (isEn() ? 'Projection settings' : 'Fremskrivningsindstillinger')}</h3>
-        </div>
-        {isHousehold && aggregatedConfig ? (
-          <>
-            <div style={{display: "grid", gridTemplateColumns: `repeat(${aggregatedConfig.members.length}, 1fr)`, gap: 16, marginBottom: 16}}>
-              {aggregatedConfig.members.map((m, i) => {
-                const c = m.cfg;
-                const mMonthly = (c.monthly || 0) * (1 + (c.match || 0) / 100);
-                return (
-                  <div key={i} style={{padding: 16, borderRadius: 12, background: "var(--bg-sunk)", border: "1px solid var(--border)"}}>
-                    <div style={{fontWeight: 600, fontSize: 13, marginBottom: 10, display: "flex", alignItems: "center", gap: 6}}>
-                      <Icon name={i === 0 ? "user" : (householdMembers[i-1]?.role === 'child' ? "baby" : "user")} size={14} style={{opacity: 0.5}} />
-                      {m.label}
-                    </div>
-                    <div style={{display: "grid", gap: 8}}>
-                      <div style={{display: "flex", justifyContent: "space-between", fontSize: 12}}>
-                        <span style={{color: "var(--text-dim)"}}>{isEn() ? 'Savings' : 'Opsparing'}</span>
-                        <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily: "var(--font-mono)", fontWeight: 500}}>{fmtC(c.lumpSum || 0)}</span>
-                      </div>
-                      <div style={{display: "flex", justifyContent: "space-between", fontSize: 12}}>
-                        <span style={{color: "var(--text-dim)"}}>{isEn() ? 'Monthly' : 'Månedlig'}</span>
-                        <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily: "var(--font-mono)", fontWeight: 500}}>{fmtC(mMonthly)}</span>
-                      </div>
-                      <div style={{display: "flex", justifyContent: "space-between", fontSize: 12}}>
-                        <span style={{color: "var(--text-dim)"}}>{isEn() ? 'Age' : 'Alder'}</span>
-                        <span style={{fontFamily: "var(--font-mono)", fontWeight: 500}}>{c.currentAge || 39} → {c.retireAge || 67}</span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <div style={{fontSize: 11, color: "var(--text-dim)", textAlign: "center", padding: "4px 0"}}>
-              {isEn() ? 'Projection uses combined savings & contributions. Switch to an individual member to edit.' : 'Fremskrivning bruger samlede opsparinger. Skift til et enkelt medlem for at redigere.'}
-            </div>
-          </>
-        ) : (
-          <>
-            {/* Row 1: Lump sum + monthly + employer match */}
-            <div style={{display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginBottom: 20}}>
-              <div>
-                <label style={labelStyle}>{isEn() ? 'Current pension savings' : 'Nuværende pensionsopsparing'}</label>
-                <input type="number" value={config.lumpSum || ''} step="10000" min="0"
-                  placeholder={isEn() ? 'e.g. 250000' : 'f.eks. 250000'}
-                  onChange={e => updateConfig('lumpSum', e.target.value)}
-                  onFocus={e => e.target.style.borderColor = 'var(--accent)'}
-                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
-                  style={inputStyle} />
-                <div style={{fontSize: 10, color: "var(--text-dim)", marginTop: 4, textAlign: "right"}}>{isEn() ? 'total saved so far (kr.)' : 'samlet opsparet (kr.)'}</div>
-              </div>
-              <div>
-                <label style={labelStyle}>{isEn() ? 'Monthly contribution' : 'Månedligt bidrag'}</label>
-                <input type="number" value={config.monthly} step="500"
-                  onChange={e => updateConfig('monthly', e.target.value)}
-                  onFocus={e => e.target.style.borderColor = 'var(--accent)'}
-                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
-                  style={inputStyle} />
-                <div style={{fontSize: 10, color: "var(--text-dim)", marginTop: 4, textAlign: "right"}}>kr. / {isEn() ? 'month' : 'måned'}</div>
-              </div>
-              <div>
-                <label style={labelStyle}>{isEn() ? 'Employer match' : 'Arbejdsgiver match'}</label>
-                <input type="number" value={config.match} step="1" min="0" max="100"
-                  onChange={e => updateConfig('match', e.target.value)}
-                  onFocus={e => e.target.style.borderColor = 'var(--accent)'}
-                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
-                  style={inputStyle} />
-                <div style={{fontSize: 10, color: "var(--text-dim)", marginTop: 4, textAlign: "right"}}>%</div>
-              </div>
-            </div>
-            {/* Row 2: Age sliders */}
-            <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20}}>
-              <div>
-                <label style={labelStyle}>{isEn() ? 'Current age' : 'Nuværende alder'}: <strong style={{color: "var(--text)"}}>{config.currentAge}</strong></label>
-                <input type="range" min="18" max="65" value={config.currentAge}
-                  onChange={e => updateConfig('currentAge', e.target.value)}
-                  style={{width: "100%", marginTop: 8, accentColor: "var(--accent)"}} />
-                <div style={{display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-dim)", marginTop: 2}}>
-                  <span>18</span><span>65</span>
-                </div>
-              </div>
-              <div>
-                <label style={labelStyle}>{isEn() ? 'Retirement age' : 'Pensionsalder'}: <strong style={{color: "var(--text)"}}>{config.retireAge}</strong></label>
-                <input type="range" min="55" max="80" value={config.retireAge}
-                  onChange={e => updateConfig('retireAge', e.target.value)}
-                  style={{width: "100%", marginTop: 8, accentColor: "var(--accent)"}} />
-                <div style={{display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-dim)", marginTop: 2}}>
-                  <span>55</span><span>80</span>
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Scenario cards — clickable to highlight */}
-      {scenarios.length > 0 && (
-        <>
-          <div className="grid grid-12" style={{marginBottom: 24}}>
-            {scenarios.map((s, i) => {
-              const isActive = activeScenario === i;
-              const growthPct = s.totalContributed > 0 ? ((s.totalGrowth / s.totalContributed) * 100) : 0;
-              const contribFrac = s.finalValue > 0 ? (s.totalContributed / s.finalValue * 100) : 0;
-              return (
-                <div key={i} className="card col-4" onClick={() => setActiveScenario(i)}
-                  style={{
-                    cursor: "pointer", transition: "all 0.25s",
-                    borderColor: isActive ? scenarioColors[i] : "var(--border)",
-                    boxShadow: isActive ? `0 0 0 1px ${scenarioColors[i]}, 0 4px 20px ${scenarioColors[i]}22` : "none",
-                    opacity: isActive ? 1 : 0.7,
-                    transform: isActive ? "translateY(-2px)" : "none",
-                  }}>
-                  <div style={{display: "flex", alignItems: "center", gap: 8, marginBottom: 14}}>
-                    <div style={{
-                      width: 32, height: 32, borderRadius: 8,
-                      background: `${scenarioColors[i]}18`,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                    }}>
-                      <Icon name={scenarioIcons[i]} size={16} style={{color: scenarioColors[i]}} />
-                    </div>
-                    <div>
-                      <div style={{fontWeight: 600, fontSize: 13}}>{isEn() ? scenarioNames[i] : scenarioNamesDa[i]}</div>
-                      <div style={{fontSize: 11, color: "var(--text-dim)", fontFamily: "var(--font-mono)"}}>{(s.rate * 100).toFixed(0)}% p.a.</div>
-                    </div>
-                    {isActive && <div style={{marginLeft: "auto", width: 8, height: 8, borderRadius: "50%", background: scenarioColors[i]}} />}
-                  </div>
-                  <div className={`value${privacyMode ? ' sensitive' : ''}`} style={{fontSize: 26, marginBottom: 8}}>{fmtC(s.finalValue)}</div>
-
-                  {/* Contributions vs growth breakdown bar */}
-                  <div style={{height: 6, borderRadius: 3, overflow: "hidden", display: "flex", background: "var(--bg-sunk)", marginBottom: 10}}>
-                    <div style={{width: `${contribFrac}%`, background: "var(--text-muted)", opacity: 0.4, transition: "width 0.3s"}} />
-                    <div style={{flex: 1, background: scenarioColors[i], opacity: 0.5, transition: "width 0.3s"}} />
-                  </div>
-
-                  <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8}}>
-                    <div>
-                      <div style={{fontSize: 10, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em"}}>{isEn() ? 'Contributed' : 'Indbetalt'}</div>
-                      <div className={privacyMode ? 'sensitive' : ''} style={{fontSize: 13, fontWeight: 500, fontFamily: "var(--font-mono)"}}>{fmtC(s.totalContributed)}</div>
-                    </div>
-                    <div>
-                      <div style={{fontSize: 10, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em"}}>{isEn() ? 'Growth' : 'Afkast'}</div>
-                      <div className={privacyMode ? 'sensitive' : ''} style={{fontSize: 13, fontWeight: 500, fontFamily: "var(--font-mono)", color: "var(--pos)"}}>{fmtC(s.totalGrowth)} <span style={{fontSize: 10, opacity: 0.7}}>({growthPct.toFixed(0)}%)</span></div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Interactive projection chart */}
-          <div className="card">
-            <div className="card-head">
-              <h3 className="card-title">{isEn() ? 'Projection to retirement' : 'Fremskrivning til pension'}</h3>
-              <div style={{display: "flex", gap: 14}}>
-                {scenarios.map((s, i) => (
-                  <span key={i} onClick={() => setActiveScenario(i)} style={{
-                    display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 11,
-                    opacity: activeScenario === i ? 1 : 0.45, transition: "opacity 0.2s",
-                    fontWeight: activeScenario === i ? 600 : 400,
-                  }}>
-                    <span style={{width: 8, height: 8, borderRadius: 2, background: scenarioColors[i]}} />
-                    {(s.rate * 100).toFixed(0)}%
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div style={{position: "relative"}}>
-              <svg viewBox={`0 0 ${chartW} ${chartH}`} style={{width: "100%", height: 300}}
-                onMouseLeave={() => setHoverYear(null)}>
-                {/* Grid lines */}
-                {[0, 0.25, 0.5, 0.75, 1].map(frac => {
-                  const val = maxVal * frac;
-                  const y = padT + plotH - (frac * plotH);
-                  return (
-                    <g key={frac}>
-                      <line x1={padL} x2={chartW - padR} y1={y} y2={y} stroke="var(--border)" strokeWidth="0.5" strokeDasharray="4,3" />
-                      <text x={padL - 8} y={y + 4} textAnchor="end" fontSize="9" fill="var(--text-dim)" fontFamily="var(--font-mono)">{fmtC(val)}</text>
-                    </g>
-                  );
-                })}
-
-                {/* Scenario lines */}
-                {scenarios.map((s, si) => {
-                  const isActive = activeScenario === si;
-                  const pts = s.points.map((p, pi) => {
-                    const x = padL + (pi / Math.max(1, s.points.length - 1)) * plotW;
-                    const y = padT + plotH - (maxVal > 0 ? (p.value / maxVal) * plotH : 0);
-                    return `${x},${y}`;
-                  }).join(' ');
-                  const firstX = padL, lastX = padL + plotW, baseline = padT + plotH;
-                  return (
-                    <g key={si} style={{transition: "opacity 0.3s", opacity: isActive ? 1 : 0.2}}>
-                      <polygon points={`${firstX},${baseline} ${pts} ${lastX},${baseline}`} fill={scenarioColors[si]} opacity={isActive ? 0.12 : 0.05} />
-                      <polyline points={pts} fill="none" stroke={scenarioColors[si]} strokeWidth={isActive ? 2.5 : 1.5} />
-                      {/* End dot */}
-                      {s.points.length > 0 && (() => {
-                        const lastPt = s.points[s.points.length - 1];
-                        const lx = padL + plotW;
-                        const ly = padT + plotH - (maxVal > 0 ? (lastPt.value / maxVal) * plotH : 0);
-                        return isActive ? <circle cx={lx} cy={ly} r={4} fill={scenarioColors[si]} stroke="var(--bg-card)" strokeWidth="2" /> : null;
-                      })()}
-                    </g>
-                  );
-                })}
-
-                {/* Hover overlay — invisible rects for each year */}
-                {scenarios[0]?.points.map((p, pi) => {
-                  const x = padL + (pi / Math.max(1, scenarios[0].points.length - 1)) * plotW;
-                  const w = plotW / Math.max(1, scenarios[0].points.length - 1);
-                  return (
-                    <rect key={pi} x={x - w / 2} y={padT} width={w} height={plotH}
-                      fill="transparent" style={{cursor: "crosshair"}}
-                      onMouseEnter={() => setHoverYear(pi)} />
-                  );
-                })}
-
-                {/* Hover vertical line + value label */}
-                {hoverYear != null && scenarios[0]?.points[hoverYear] && (() => {
-                  const x = padL + (hoverYear / Math.max(1, scenarios[0].points.length - 1)) * plotW;
-                  const activeS = scenarios[activeScenario];
-                  const pt = activeS.points[hoverYear];
-                  const y = padT + plotH - (maxVal > 0 ? (pt.value / maxVal) * plotH : 0);
-                  return (
-                    <g>
-                      <line x1={x} x2={x} y1={padT} y2={padT + plotH} stroke="var(--text-muted)" strokeWidth="1" strokeDasharray="3,3" opacity="0.5" />
-                      <circle cx={x} cy={y} r={5} fill={scenarioColors[activeScenario]} stroke="var(--bg-card)" strokeWidth="2" />
-                      <rect x={x - 50} y={y - 28} width={100} height={22} rx={6} fill="var(--bg-raised)" stroke="var(--border)" strokeWidth="0.5" />
-                      <text x={x} y={y - 14} textAnchor="middle" fontSize="10" fontFamily="var(--font-mono)" fontWeight="600" fill="var(--text)">{fmtC(pt.value)}</text>
-                      <text x={x} y={padT + plotH + 14} textAnchor="middle" fontSize="9" fill="var(--accent)" fontFamily="var(--font-mono)" fontWeight="600">{isEn() ? `Age ${pt.year}` : `Alder ${pt.year}`}</text>
-                    </g>
-                  );
-                })()}
-
-                {/* X-axis labels */}
-                {hoverYear == null && scenarios[0]?.points.filter((_, i) => i % 5 === 0 || i === scenarios[0].points.length - 1).map((p, pi) => {
-                  const idx = scenarios[0].points.indexOf(p);
-                  const x = padL + (idx / Math.max(1, scenarios[0].points.length - 1)) * plotW;
-                  return <text key={pi} x={x} y={chartH - 8} textAnchor="middle" fontSize="9" fill="var(--text-dim)" fontFamily="var(--font-mono)">{isEn() ? `Age ${p.year}` : `${p.year}`}</text>;
-                })}
-              </svg>
-            </div>
-          </div>
-
-          {/* Pension accounts list */}
-          <div className="card" style={{marginTop: 24}}>
-            <div className="card-head">
-              <h3 className="card-title">{isEn() ? 'Your pension accounts' : 'Dine pensionskonti'}</h3>
-              <button className="btn btn-sm" onClick={() => openModal('entry', { type: 'asset', category: 'pension' })}>
-                <Icon name="plus" size={13}/> {isEn() ? 'Add' : 'Tilføj'}
+        <div className="page-actions">
+          {activeTab === 'investments' && (
+            <>
+              <button className="btn" onClick={()=>openModal('import')}>
+                <Icon name="upload" size={15}/> {tl("portfolio.import")}
               </button>
-            </div>
-            {pensionEntries.length === 0 ? (
-              <div style={{textAlign: "center", padding: "24px 16px", color: "var(--text-dim)", fontSize: 13}}>
-                {isEn() ? 'No pension accounts yet. Add one to track your retirement savings.' : 'Ingen pensionskonti endnu. Tilføj en for at følge din pensionsopsparing.'}
-              </div>
-            ) : pensionEntries.map((e, i) => (
-              <div key={e.id || i} className="line-row" style={{alignItems: "center"}}>
-                <div className="line-mark"><Icon name="briefcase" /></div>
-                <div style={{flex: 1}}>
-                  <div className="line-name">{e.name || (isEn() ? 'Pension account' : 'Pensionskonto')}</div>
-                  <div className="line-sub">{e.provider || e.category}</div>
-                </div>
-                <div className="line-val" style={{marginRight: 8}}>{fmtC(e.amount)}</div>
-                <div style={{display: "flex", gap: 2}}>
-                  <button className="icon-btn" style={{width: 28, height: 28}} onClick={() => openModal('entry', e)}><Icon name="edit" size={13}/></button>
-                  <button className="icon-btn" style={{width: 28, height: 28}} onClick={() => {
-                    if (confirm(isEn() ? `Delete "${e.name}"?` : `Slet "${e.name}"?`)) {
-                      APP_STATE.entries = APP_STATE.entries.filter(x => x.id !== e.id);
-                      window.saveData();
-                      if (window.syncPortfolioToNetWorth) syncPortfolioToNetWorth();
-                      refresh();
-                    }
-                  }}><Icon name="trash" size={13}/></button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-
-      {/* Empty state */}
-      {currentPension === 0 && scenarios.length > 0 && (
-        <div className="card" style={{textAlign: "center", padding: "32px 24px", marginTop: 16, background: "var(--bg-sunk)", borderStyle: "dashed"}}>
-          <Icon name="trending" size={36} style={{color: "var(--text-dim)", marginBottom: 10}} />
-          <p style={{color: "var(--text-muted)", fontSize: 13, maxWidth: 360, margin: "0 auto", lineHeight: 1.5}}>
-            {isEn()
-              ? 'Your projections are based on contributions only. Add pension entries in Net Worth to include your current balance.'
-              : 'Dine fremskrivninger er kun baseret på bidrag. Tilføj pensionsposter under Formue for at inkludere din nuværende saldo.'}
-          </p>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// ==========================================================================
-// ASSETS & LOANS (Big Picture)
-// ==========================================================================
-const MortgageScreen = ({ state, refresh, openModal, household, activeMember, privacyMode }) => {
-  const entries = state.entries || [];
-
-  // Group all big assets (not cash/investment — those are in portfolio/networth)
-  const assetCategories = {
-    property:    { icon: "home",      en: "Real estate",    da: "Ejendom",     color: "oklch(0.55 0.14 145)" },
-    vehicle:     { icon: "zap",       en: "Vehicles",       da: "Køretøjer",   color: "oklch(0.55 0.14 265)" },
-    other_asset: { icon: "briefcase", en: "Other assets",   da: "Andre aktiver",color: "oklch(0.60 0.14 45)" },
-  };
-  const loanCategories = {
-    mortgage:       { icon: "home",      en: "Mortgage",       da: "Realkreditlån",  color: "oklch(0.55 0.15 25)" },
-    car_loan:       { icon: "zap",       en: "Car loan",       da: "Billån",         color: "oklch(0.55 0.14 350)" },
-    student_loan:   { icon: "edit",      en: "Student loan",   da: "Studielån",      color: "oklch(0.60 0.12 265)" },
-    credit_card:    { icon: "alert",     en: "Credit card",    da: "Kreditkort",     color: "oklch(0.55 0.16 45)" },
-    other_liability:{ icon: "briefcase", en: "Other loans",    da: "Anden gæld",     color: "oklch(0.55 0.10 200)" },
-  };
-
-  const bigAssets = entries.filter(e => e.type === 'asset' && assetCategories[e.category]);
-  const loans = entries.filter(e => e.type === 'liability' && loanCategories[e.category]);
-  // Also include liabilities with categories that match our loan types
-  const allLoans = entries.filter(e => e.type === 'liability');
-
-  const totalBigAssets = bigAssets.reduce((s, e) => s + (e.amount || 0), 0);
-  const totalLoans = allLoans.reduce((s, e) => s + (e.amount || 0), 0);
-  const netPosition = totalBigAssets - totalLoans;
-
-  // Mortgage-specific for amortization
-  const propertyValue = entries.filter(e => e.category === 'property').reduce((s, e) => s + (e.amount || 0), 0);
-  const mortgageBalance = entries.filter(e => e.category === 'mortgage').reduce((s, e) => s + (e.amount || 0), 0);
-
-  const defaults = { rate: 3.5, payment: 8000, years: 25 };
-  const [config, setConfig] = useState(() => {
-    try { return { ...defaults, ...(JSON.parse(localStorage.getItem('pi-mortgage-config')) || {}) }; } catch { return defaults; }
-  });
-  const updateConfig = (key, val) => {
-    const next = { ...config, [key]: parseFloat(val) || 0 };
-    setConfig(next);
-    try { localStorage.setItem('pi-mortgage-config', JSON.stringify(next)); } catch {}
-  };
-
-  // Ownership split between household members
-  const hasPartner = (household || []).some(m => m.relation === 'partner');
-  const partner = (household || []).find(m => m.relation === 'partner');
-  const [ownershipSplit, setOwnershipSplit] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('pi-property-split')) || { me: 50 }; } catch { return { me: 50 }; }
-  });
-  const myPct = ownershipSplit.me ?? 50;
-  const partnerPct = 100 - myPct;
-  const updateSplit = (meVal) => {
-    const clamped = Math.max(0, Math.min(100, parseInt(meVal) || 0));
-    const next = { me: clamped };
-    setOwnershipSplit(next);
-    try { localStorage.setItem('pi-property-split', JSON.stringify(next)); } catch {}
-  };
-
-  const projection = useMemo(() =>
-    window.computeMortgageProjection
-      ? computeMortgageProjection(propertyValue, mortgageBalance, config.rate, config.payment, config.years)
-      : null,
-    [propertyValue, mortgageBalance, config.rate, config.payment, config.years]
-  );
-
-  const homeEquity = propertyValue - mortgageBalance;
-  const ltv = propertyValue > 0 ? (mortgageBalance / propertyValue * 100) : 0;
-
-  const chartW = 640, chartH = 240, padL = 70, padR = 20, padT = 24, padB = 36;
-  const plotW = chartW - padL - padR, plotH = chartH - padT - padB;
-
-  const inputStyle = {
-    width: "100%", padding: "10px 14px", borderRadius: 10,
-    border: "1px solid var(--border)", background: "var(--bg-sunk)",
-    color: "var(--text)", fontFamily: "var(--font-mono)", fontSize: 16,
-    fontWeight: 500, textAlign: "right", outline: "none", transition: "border-color 0.2s",
-  };
-  const labelStyle = { fontSize: 12, color: "var(--text-dim)", marginBottom: 6, display: "block", fontWeight: 500 };
-
-  // Donut data for asset distribution
-  const assetDonut = useMemo(() => {
-    const groups = {};
-    bigAssets.forEach(e => {
-      const cat = assetCategories[e.category] || assetCategories.other_asset;
-      const key = e.category;
-      if (!groups[key]) groups[key] = { name: isEn() ? cat.en : cat.da, value: 0, color: cat.color };
-      groups[key].value += e.amount || 0;
-    });
-    return Object.values(groups).sort((a, b) => b.value - a.value);
-  }, [bigAssets.length, state.tick]);
-
-  const loanDonut = useMemo(() => {
-    const groups = {};
-    allLoans.forEach(e => {
-      const cat = loanCategories[e.category] || loanCategories.other_liability;
-      const key = e.category;
-      if (!groups[key]) groups[key] = { name: isEn() ? cat.en : cat.da, value: 0, color: cat.color };
-      groups[key].value += e.amount || 0;
-    });
-    return Object.values(groups).sort((a, b) => b.value - a.value);
-  }, [allLoans.length, state.tick]);
-
-  return (
-    <div className="screen active">
-      <div className="page-head">
-        <div>
-          <h1 className="page-title">{isEn() ? <><em>Assets</em> & Loans</> : <><em>Aktiver</em> & Lån</>}</h1>
-          <p className="page-subtitle">{isEn() ? 'Your big-ticket assets, loans and home equity' : 'Dine store aktiver, lån og friværdi'}</p>
-        </div>
-        {openModal && (
-          <div className="page-actions">
-            <button className="btn" onClick={() => openModal('entry', { type: 'asset', category: 'property' })}>
-              <Icon name="plus" size={14}/> {isEn() ? 'Add entry' : 'Tilføj post'}
+              <button className="btn btn-accent" onClick={()=>openModal('position')}>
+                <Icon name="plus" size={15}/> {tl("portfolio.addPosition")}
+              </button>
+            </>
+          )}
+          {activeTab === 'assets' && (
+            <button className="btn btn-accent" onClick={() => openModal('entry')}>
+              <Icon name="plus" size={15}/> {tl("networth.addEntry")}
             </button>
-          </div>
-        )}
-      </div>
-
-      {/* KPI row */}
-      <div className="grid grid-12" style={{marginBottom: 24}}>
-        <div className="card col-3 stat">
-          <div className="eyebrow">{isEn() ? 'Total assets' : 'Aktiver i alt'}</div>
-          <div className={`value${privacyMode ? ' sensitive' : ''}`} style={{fontSize: 28}}>{fmtC(totalBigAssets)}</div>
-          <div style={{fontSize: 11, color: "var(--text-dim)", marginTop: 4}}>{bigAssets.length} {isEn() ? 'items' : 'poster'}</div>
-        </div>
-        <div className="card col-3 stat">
-          <div className="eyebrow">{isEn() ? 'Total loans' : 'Lån i alt'}</div>
-          <div className={`value${privacyMode ? ' sensitive' : ''}`} style={{fontSize: 28, color: "var(--neg)"}}>{fmtC(totalLoans)}</div>
-          <div style={{fontSize: 11, color: "var(--text-dim)", marginTop: 4}}>{allLoans.length} {isEn() ? 'loans' : 'lån'}</div>
-        </div>
-        <div className="card col-3 stat">
-          <div className="eyebrow">{isEn() ? 'Net position' : 'Netto'}</div>
-          <div className={`value${privacyMode ? ' sensitive' : ''}`} style={{fontSize: 28, color: netPosition >= 0 ? "var(--pos)" : "var(--neg)"}}>{fmtC(netPosition)}</div>
-          <div style={{fontSize: 11, color: "var(--text-dim)", marginTop: 4}}>{isEn() ? 'assets minus loans' : 'aktiver minus lån'}</div>
-        </div>
-        {propertyValue > 0 && (
-          <div className="card col-3 stat">
-            <div className="eyebrow">LTV</div>
-            <div className="value" style={{fontSize: 28, color: ltv > 80 ? "var(--neg)" : ltv > 60 ? "var(--accent)" : "var(--pos)"}}>{ltv.toFixed(1)}%</div>
-            <div style={{fontSize: 11, color: "var(--text-dim)", marginTop: 4}}>
-              <span className={privacyMode ? 'sensitive' : ''}>{fmtC(homeEquity)}</span> {isEn() ? 'equity' : 'friværdi'}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Property ownership split — only if partner exists and property exists */}
-      {hasPartner && propertyValue > 0 && (
-        <div className="card" style={{marginBottom: 24}}>
-          <div className="card-head">
-            <h3 className="card-title"><Icon name="users" size={15} style={{marginRight: 6, opacity: 0.5}}/>{isEn() ? 'Property ownership' : 'Ejendomsejerskab'}</h3>
-          </div>
-          <div style={{display:"grid", gridTemplateColumns:"1fr auto 1fr", gap: 20, alignItems: "center"}}>
-            {/* Me */}
-            <div style={{textAlign: "center"}}>
-              <div style={{fontSize: 12, color: "var(--text-dim)", marginBottom: 6, fontWeight: 500}}>
-                <Icon name="user" size={12} style={{marginRight: 4, opacity: 0.5}}/>{isEn() ? 'Me' : 'Mig'}
-              </div>
-              <div style={{fontFamily: "var(--font-display)", fontSize: 28, fontWeight: 600}}>{myPct}%</div>
-              <div className={privacyMode ? 'sensitive' : ''} style={{fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--pos)", marginTop: 4}}>
-                {fmtC(homeEquity * myPct / 100)}
-              </div>
-              <div style={{fontSize: 10, color: "var(--text-dim)", marginTop: 2}}>{isEn() ? 'equity share' : 'friværdiandel'}</div>
-            </div>
-            {/* Slider */}
-            <div style={{width: 200, textAlign: "center"}}>
-              <input type="range" min="0" max="100" step="5" value={myPct}
-                onChange={e => updateSplit(e.target.value)}
-                style={{width: "100%", accentColor: "var(--accent)"}} />
-              <div style={{display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-dim)", marginTop: 2}}>
-                <span>0%</span><span>50/50</span><span>100%</span>
-              </div>
-            </div>
-            {/* Partner */}
-            <div style={{textAlign: "center"}}>
-              <div style={{fontSize: 12, color: "var(--text-dim)", marginBottom: 6, fontWeight: 500}}>
-                <Icon name="user" size={12} style={{marginRight: 4, opacity: 0.5}}/>{partner?.name || 'Partner'}
-              </div>
-              <div style={{fontFamily: "var(--font-display)", fontSize: 28, fontWeight: 600}}>{partnerPct}%</div>
-              <div className={privacyMode ? 'sensitive' : ''} style={{fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--pos)", marginTop: 4}}>
-                {fmtC(homeEquity * partnerPct / 100)}
-              </div>
-              <div style={{fontSize: 10, color: "var(--text-dim)", marginTop: 2}}>{isEn() ? 'equity share' : 'friværdiandel'}</div>
-            </div>
-          </div>
-          <div style={{display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-dim)", marginTop: 16, paddingTop: 12, borderTop: "1px solid var(--border)"}}>
-            <span>{isEn() ? 'Total property' : 'Ejendomsværdi'}: <span className={privacyMode ? 'sensitive' : ''}>{fmtC(propertyValue)}</span></span>
-            <span>{isEn() ? 'Total mortgage' : 'Realkreditlån'}: <span className={privacyMode ? 'sensitive' : ''}>{fmtC(mortgageBalance)}</span></span>
-            <span>{isEn() ? 'Total equity' : 'Friværdi i alt'}: <span className={privacyMode ? 'sensitive' : ''}>{fmtC(homeEquity)}</span></span>
-          </div>
-        </div>
-      )}
-
-      {/* Assets & Loans side by side */}
-      <div className="grid grid-12" style={{marginBottom: 24}}>
-        {/* Assets list */}
-        <div className="card col-6">
-          <div className="card-head">
-            <h3 className="card-title"><Icon name="arrow_up" size={14} style={{color: "var(--pos)", marginRight: 6}}/>{isEn() ? 'Assets' : 'Aktiver'}</h3>
-            <span style={{fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 600}}>{fmtC(totalBigAssets)}</span>
-          </div>
-          {bigAssets.length === 0 ? (
-            <div style={{color: "var(--text-dim)", fontSize: 13, padding: "20px 0", textAlign: "center"}}>
-              {isEn() ? 'No big assets added yet' : 'Ingen store aktiver tilføjet endnu'}
-            </div>
-          ) : bigAssets.map((e, i) => {
-            const cat = assetCategories[e.category] || assetCategories.other_asset;
-            const pct = totalBigAssets > 0 ? (e.amount / totalBigAssets * 100) : 0;
-            return (
-              <div key={e.id || i} className="line-row" style={{padding: "10px 0"}}>
-                <div style={{
-                  width: 36, height: 36, borderRadius: 10,
-                  background: `${cat.color}15`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-                }}>
-                  <Icon name={cat.icon} size={16} style={{color: cat.color}} />
-                </div>
-                <div style={{flex: 1, minWidth: 0}}>
-                  <div style={{fontWeight: 500, fontSize: 13}}>{e.name}</div>
-                  <div style={{fontSize: 11, color: "var(--text-dim)"}}>{isEn() ? cat.en : cat.da}</div>
-                </div>
-                <div style={{textAlign: "right"}}>
-                  <div style={{fontFamily: "var(--font-mono)", fontSize: 14, fontWeight: 600}}>{fmtC(e.amount)}</div>
-                  <div style={{fontSize: 10, color: "var(--text-dim)"}}>{pct.toFixed(0)}%</div>
-                </div>
-              </div>
-            );
-          })}
-          {/* Mini donut */}
-          {assetDonut.length > 1 && (
-            <div style={{display: "flex", justifyContent: "center", paddingTop: 16, borderTop: "1px solid var(--border)", marginTop: 8}}>
-              <Donut data={assetDonut.map(d => ({...d, value: totalBigAssets > 0 ? d.value / totalBigAssets * 100 : 0 }))} />
-            </div>
           )}
-        </div>
-
-        {/* Loans list */}
-        <div className="card col-6">
-          <div className="card-head">
-            <h3 className="card-title"><Icon name="arrow_down" size={14} style={{color: "var(--neg)", marginRight: 6}}/>{isEn() ? 'Loans' : 'Lån'}</h3>
-            <span style={{fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 600, color: "var(--neg)"}}>{fmtC(totalLoans)}</span>
-          </div>
-          {allLoans.length === 0 ? (
-            <div style={{color: "var(--text-dim)", fontSize: 13, padding: "20px 0", textAlign: "center"}}>
-              {isEn() ? 'No loans — debt free!' : 'Ingen lån — gældfri!'}
-            </div>
-          ) : allLoans.map((e, i) => {
-            const cat = loanCategories[e.category] || loanCategories.other_liability;
-            const pct = totalLoans > 0 ? (e.amount / totalLoans * 100) : 0;
-            return (
-              <div key={e.id || i} className="line-row" style={{padding: "10px 0"}}>
-                <div style={{
-                  width: 36, height: 36, borderRadius: 10,
-                  background: `${cat.color}15`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-                }}>
-                  <Icon name={cat.icon} size={16} style={{color: cat.color}} />
-                </div>
-                <div style={{flex: 1, minWidth: 0}}>
-                  <div style={{fontWeight: 500, fontSize: 13}}>{e.name}</div>
-                  <div style={{fontSize: 11, color: "var(--text-dim)"}}>{isEn() ? cat.en : cat.da}</div>
-                </div>
-                <div style={{textAlign: "right"}}>
-                  <div style={{fontFamily: "var(--font-mono)", fontSize: 14, fontWeight: 600, color: "var(--neg)"}}>{fmtC(e.amount)}</div>
-                  <div style={{fontSize: 10, color: "var(--text-dim)"}}>{pct.toFixed(0)}%</div>
-                </div>
-              </div>
-            );
-          })}
-          {loanDonut.length > 1 && (
-            <div style={{display: "flex", justifyContent: "center", paddingTop: 16, borderTop: "1px solid var(--border)", marginTop: 8}}>
-              <Donut data={loanDonut.map(d => ({...d, value: totalLoans > 0 ? d.value / totalLoans * 100 : 0 }))} />
-            </div>
+          {activeTab === 'pension' && (
+            <button className="btn btn-accent" onClick={() => openModal('entry', { type: 'asset', category: 'pension' })}>
+              <Icon name="plus" size={15}/> {isEn() ? 'Add pension' : 'Tilfoej pension'}
+            </button>
+          )}
+          {activeTab === 'property' && (
+            <button className="btn" onClick={() => openModal('entry', { type: 'asset', category: 'property' })}>
+              <Icon name="plus" size={14}/> {isEn() ? 'Add entry' : 'Tilfoej post'}
+            </button>
           )}
         </div>
       </div>
 
-      {/* Net position bar */}
-      {(totalBigAssets > 0 || totalLoans > 0) && (
-        <div className="card" style={{marginBottom: 24}}>
-          <div className="card-head">
-            <h3 className="card-title">{isEn() ? 'Assets vs Loans' : 'Aktiver vs Lån'}</h3>
-            <span style={{fontFamily: "var(--font-mono)", fontSize: 12, color: netPosition >= 0 ? "var(--pos)" : "var(--neg)", fontWeight: 600}}>
-              {isEn() ? 'Net' : 'Netto'}: {fmtC(netPosition)}
-            </span>
-          </div>
-          <div style={{height: 32, borderRadius: 8, overflow: "hidden", display: "flex", background: "var(--bg-sunk)"}}>
-            {(() => {
-              const total = totalBigAssets + totalLoans;
-              const assetW = total > 0 ? (totalBigAssets / total * 100) : 50;
-              return <>
-                <div style={{width: `${assetW}%`, background: "oklch(0.45 0.12 145 / 0.6)", transition: "width 0.3s", display: "flex", alignItems: "center", justifyContent: "center"}}>
-                  <span style={{fontSize: 10, fontWeight: 600, color: "white"}}>{fmtC(totalBigAssets)}</span>
-                </div>
-                <div style={{flex: 1, background: "oklch(0.55 0.15 25 / 0.5)", display: "flex", alignItems: "center", justifyContent: "center"}}>
-                  <span style={{fontSize: 10, fontWeight: 600, color: "white"}}>{fmtC(totalLoans)}</span>
-                </div>
-              </>;
-            })()}
-          </div>
-          <div style={{display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-dim)", marginTop: 4}}>
-            <span>{isEn() ? 'Assets' : 'Aktiver'}</span>
-            <span>{isEn() ? 'Loans' : 'Lån'}</span>
-          </div>
-        </div>
-      )}
+      {/* Tab switcher */}
+      <div className="segmented" style={{marginBottom:20}}>
+        <button className={activeTab==="investments"?"active":""} onClick={()=>setActiveTab("investments")}>{isEn() ? 'Investments' : 'Investeringer'}</button>
+        <button className={activeTab==="assets"?"active":""} onClick={()=>setActiveTab("assets")}>{isEn() ? 'Assets & Liabilities' : 'Aktiver & Passiver'}</button>
+        <button className={activeTab==="pension"?"active":""} onClick={()=>setActiveTab("pension")}>{isEn() ? 'Pension' : 'Pension'}</button>
+        <button className={activeTab==="property"?"active":""} onClick={()=>setActiveTab("property")}>{isEn() ? 'Property' : 'Ejendom'}</button>
+      </div>
 
-      {/* Mortgage amortization section — only shows if property + mortgage exist */}
-      {propertyValue > 0 && mortgageBalance > 0 && (
-        <>
-          <div className="card" style={{marginBottom: 24}}>
-            <div className="card-head">
-              <h3 className="card-title"><Icon name="home" size={15} style={{marginRight: 6, opacity: 0.5}}/>{isEn() ? 'Mortgage amortization' : 'Realkreditlån afdrag'}</h3>
-              <span style={{fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-dim)"}}>
-                {fmtC(homeEquity)} {isEn() ? 'equity' : 'friværdi'} ({(propertyValue > 0 ? (homeEquity / propertyValue * 100) : 0).toFixed(0)}%)
-              </span>
-            </div>
-            <div style={{display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginBottom: 16}}>
-              <div>
-                <label style={labelStyle}>{isEn() ? 'Interest rate %' : 'Rente %'}</label>
-                <input type="number" step="0.1" value={config.rate}
-                  onChange={e => updateConfig('rate', e.target.value)}
-                  onFocus={e => e.target.style.borderColor = 'var(--accent)'}
-                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
-                  style={inputStyle} />
-              </div>
-              <div>
-                <label style={labelStyle}>{isEn() ? 'Monthly payment' : 'Månedlig ydelse'}</label>
-                <input type="number" step="500" value={config.payment}
-                  onChange={e => updateConfig('payment', e.target.value)}
-                  onFocus={e => e.target.style.borderColor = 'var(--accent)'}
-                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
-                  style={inputStyle} />
-              </div>
-              <div>
-                <label style={labelStyle}>{isEn() ? 'Remaining years' : 'Resterende år'}: <strong style={{color: "var(--text)"}}>{config.years}</strong></label>
-                <input type="range" min="1" max="30" value={config.years}
-                  onChange={e => updateConfig('years', e.target.value)}
-                  style={{width: "100%", marginTop: 12, accentColor: "var(--accent)"}} />
-                <div style={{display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-dim)", marginTop: 2}}>
-                  <span>1</span><span>30 {isEn() ? 'yrs' : 'år'}</span>
-                </div>
-              </div>
-            </div>
-            {projection && (
-              <div style={{display: "flex", gap: 24, padding: "12px 0", borderTop: "1px solid var(--border)", fontSize: 13}}>
-                <span style={{color: "var(--text-muted)"}}>{isEn() ? 'Monthly payment' : 'Ydelse'}: <strong style={{color: "var(--text)"}}>{fmtC(projection.monthlyPayment)}</strong></span>
-                <span style={{color: "var(--text-muted)"}}>{isEn() ? 'Total interest' : 'Samlet rente'}: <strong style={{color: "var(--neg)"}}>{fmtC(projection.totalInterest)}</strong></span>
-                <span style={{color: "var(--text-muted)", marginLeft: "auto"}}>{isEn() ? 'Debt free in' : 'Gældfri om'} <strong style={{color: "var(--pos)"}}>{config.years} {isEn() ? 'years' : 'år'}</strong></span>
-              </div>
-            )}
-          </div>
-
-          {projection && projection.points.length > 1 && (
-            <div className="card">
-              <div className="card-head">
-                <h3 className="card-title">{isEn() ? 'Equity growth over time' : 'Friværdivækst over tid'}</h3>
-              </div>
-              <svg viewBox={`0 0 ${chartW} ${chartH}`} style={{width: "100%", height: 280}}>
-                {[0, 0.25, 0.5, 0.75, 1].map(frac => {
-                  const val = propertyValue * frac;
-                  const y = padT + plotH - (frac * plotH);
-                  return (
-                    <g key={frac}>
-                      <line x1={padL} x2={chartW - padR} y1={y} y2={y} stroke="var(--border)" strokeWidth="0.5" strokeDasharray="4,3" />
-                      <text x={padL - 8} y={y + 4} textAnchor="end" fontSize="9" fill="var(--text-dim)" fontFamily="var(--font-mono)">{fmtC(val)}</text>
-                    </g>
-                  );
-                })}
-                {(() => {
-                  const pts = projection.points.map((p, i) => {
-                    const x = padL + (i / Math.max(1, projection.points.length - 1)) * plotW;
-                    const yDebt = padT + plotH - (propertyValue > 0 ? (p.debt / propertyValue) * plotH : 0);
-                    return `${x},${yDebt}`;
-                  }).join(' ');
-                  const baseline = padT + plotH;
-                  const firstX = padL, lastX = padL + plotW;
-                  return <polygon points={`${firstX},${baseline} ${pts} ${lastX},${baseline}`} fill="oklch(0.55 0.15 25 / 0.15)" />;
-                })()}
-                {(() => {
-                  const pts = projection.points.map((p, i) => {
-                    const x = padL + (i / Math.max(1, projection.points.length - 1)) * plotW;
-                    const yTop = padT;
-                    const yDebt = padT + plotH - (propertyValue > 0 ? (p.debt / propertyValue) * plotH : 0);
-                    return { x, yTop, yDebt };
-                  });
-                  const topPts = pts.map(p => `${p.x},${p.yTop}`).join(' ');
-                  const bottomPts = pts.map(p => `${p.x},${p.yDebt}`).reverse().join(' ');
-                  return <polygon points={`${topPts} ${bottomPts}`} fill="oklch(0.45 0.12 145 / 0.12)" />;
-                })()}
-                <polyline points={projection.points.map((p, i) => {
-                  const x = padL + (i / Math.max(1, projection.points.length - 1)) * plotW;
-                  const y = padT + plotH - (propertyValue > 0 ? (p.debt / propertyValue) * plotH : 0);
-                  return `${x},${y}`;
-                }).join(' ')} fill="none" stroke="oklch(0.55 0.15 25)" strokeWidth="2" />
-                {projection.points.filter((_, i) => i % 5 === 0 || i === projection.points.length - 1).map((p, pi) => {
-                  const idx = projection.points.indexOf(p);
-                  const x = padL + (idx / Math.max(1, projection.points.length - 1)) * plotW;
-                  return <text key={pi} x={x} y={chartH - 8} textAnchor="middle" fontSize="9" fill="var(--text-dim)" fontFamily="var(--font-mono)">{isEn() ? `Yr ${p.year}` : `År ${p.year}`}</text>;
-                })}
-              </svg>
-              <div style={{display: "flex", gap: 16, justifyContent: "center", paddingTop: 8, fontSize: 11}}>
-                <span style={{display: "flex", alignItems: "center", gap: 4}}><span style={{width: 10, height: 10, borderRadius: 2, background: "oklch(0.45 0.12 145 / 0.3)"}} />{isEn() ? 'Equity' : 'Friværdi'}</span>
-                <span style={{display: "flex", alignItems: "center", gap: 4}}><span style={{width: 10, height: 10, borderRadius: 2, background: "oklch(0.55 0.15 25 / 0.3)"}} />{isEn() ? 'Mortgage' : 'Lån'}</span>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Empty state */}
-      {totalBigAssets === 0 && totalLoans === 0 && (
-        <div className="card" style={{textAlign: "center", padding: 40, background: "var(--bg-sunk)", borderStyle: "dashed"}}>
-          <Icon name="home" size={36} style={{color: "var(--text-dim)", marginBottom: 10}} />
-          <p style={{color: "var(--text-muted)", fontSize: 13, maxWidth: 400, margin: "0 auto", lineHeight: 1.5}}>
-            {isEn()
-              ? 'Add property, vehicles, and loans in Net Worth to see your full asset and liability picture here.'
-              : 'Tilføj ejendom, køretøjer og lån under Formue for at se dit samlede aktiv- og gældsbillede her.'}
-          </p>
-        </div>
-      )}
+      {activeTab === 'investments' && <InvestmentsTab state={state} refresh={refresh} openModal={openModal} privacyMode={privacyMode} />}
+      {activeTab === 'assets' && <AssetsTab state={state} refresh={refresh} openModal={openModal} privacyMode={privacyMode} />}
+      {activeTab === 'pension' && <PensionTab state={state} refresh={refresh} openModal={openModal} activeMember={activeMember} privacyMode={privacyMode} />}
+      {activeTab === 'property' && <PropertyTab state={state} refresh={refresh} openModal={openModal} household={household} activeMember={activeMember} privacyMode={privacyMode} />}
     </div>
   );
 };
 
-// ==========================================================================
-// PORTFOLIO
-// ==========================================================================
-const PortfolioScreen = ({ state, refresh, openModal, privacyMode }) => {
+// -- Investments Tab (from PortfolioScreen) --
+const InvestmentsTab = ({ state, refresh, openModal, privacyMode }) => {
   const [q, setQ] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [acctFilter, setAcctFilter] = useState("all");
   const [sortCol, setSortCol] = useState("value");
   const [sortDir, setSortDir] = useState("desc");
   const positions = state.positions || [];
-  // Helper: position value in DKK (currency-converted)
   const posVal = (p) => toDKK((p.shares||0)*(p.currentPrice||0), p.currency);
   const totalValue = positions.reduce((s,p)=>s+posVal(p), 0);
 
-  // Auto-generate account filter options from data
   const accountOptions = useMemo(() => {
     const seen = {};
     positions.forEach(p => {
@@ -1524,7 +1042,6 @@ const PortfolioScreen = ({ state, refresh, openModal, privacyMode }) => {
   const brokerLabels = { saxo:'Saxo', nordnet:'Nordnet', lunar:'Lunar', coinbase:'Coinbase', revolut:'Revolut', wise:'Wise', kraken:'Kraken', binance:'Binance', crypto_com:'Crypto.com', other: isEn()?'Other':'Anden' };
   const accountLabels = { ask:'ASK', free: isEn()?'Free depot':'Frit depot', pension:'Pension', isk:'ISK', crypto:'Crypto', other: isEn()?'Other':'Anden' };
 
-  // Sort helper
   const handleSort = (col) => {
     if (sortCol === col) { setSortDir(d => d === 'desc' ? 'asc' : 'desc'); }
     else { setSortCol(col); setSortDir('desc'); }
@@ -1553,7 +1070,7 @@ const PortfolioScreen = ({ state, refresh, openModal, privacyMode }) => {
             const cb = (b.avgPrice && b.avgPrice > 0 && b.currentPrice) ? ((b.currentPrice - b.avgPrice) / b.avgPrice * 100) : (b.priceChangePercent || 0);
             va = ca; vb = cb; break;
           }
-          case 'weight': // same as value sort
+          case 'weight':
           case 'value': default: va = posVal(a); vb = posVal(b); break;
         }
         return sortDir === 'asc' ? va - vb : vb - va;
@@ -1568,22 +1085,7 @@ const PortfolioScreen = ({ state, refresh, openModal, privacyMode }) => {
   };
 
   return (
-    <div className="screen active">
-      <div className="page-head">
-        <div>
-          <h1 className="page-title"><em>{tl("portfolio.title")}</em> {isEn()?'holdings':''}</h1>
-          <p className="page-subtitle">{tl("portfolio.subtitle")}</p>
-        </div>
-        <div className="page-actions">
-          <button className="btn" onClick={()=>openModal('import')}>
-            <Icon name="upload" size={15}/> {tl("portfolio.import")}
-          </button>
-          <button className="btn btn-accent" onClick={()=>openModal('position')}>
-            <Icon name="plus" size={15}/> {tl("portfolio.addPosition")}
-          </button>
-        </div>
-      </div>
-
+    <>
       <div className="grid grid-12" style={{marginBottom:20}}>
         <div className="card col-4 stat">
           <div className="eyebrow">{tl("portfolio.totalValue")}</div>
@@ -1602,7 +1104,7 @@ const PortfolioScreen = ({ state, refresh, openModal, privacyMode }) => {
         <div className="card col-4 stat">
           <div className="eyebrow">{tl("portfolio.topSector")}</div>
           <div className="value" style={{fontSize:28}}>
-            {state.overlapData?.aggregated?.sectors ? Object.entries(state.overlapData.aggregated.sectors).sort((a,b)=>b[1]-a[1])[0]?.[0] || '—' : '—'}
+            {state.overlapData?.aggregated?.sectors ? Object.entries(state.overlapData.aggregated.sectors).sort((a,b)=>b[1]-a[1])[0]?.[0] || '--' : '--'}
           </div>
         </div>
       </div>
@@ -1622,7 +1124,7 @@ const PortfolioScreen = ({ state, refresh, openModal, privacyMode }) => {
             </div>
             <div className="search" style={{minWidth:220}}>
               <Icon name="search" size={14}/>
-              <input placeholder={isEn()?"Search ticker or name…":"Søg ticker eller navn…"} value={q} onChange={e=>setQ(e.target.value)}/>
+              <input placeholder={isEn()?"Search ticker or name...":"Sog ticker eller navn..."} value={q} onChange={e=>setQ(e.target.value)}/>
             </div>
           </div>
           {accountOptions.length > 1 && (
@@ -1632,7 +1134,7 @@ const PortfolioScreen = ({ state, refresh, openModal, privacyMode }) => {
                 <button className={acctFilter==="all"?"active":""} onClick={()=>setAcctFilter("all")}>{isEn()?'All':'Alle'}</button>
                 {accountOptions.map(opt => {
                   const key = `${opt.broker||'other'}|${opt.accountType||'free'}`;
-                  const label = `${brokerLabels[opt.broker]||opt.broker||'—'} · ${accountLabels[opt.accountType]||opt.accountType||'—'}`;
+                  const label = `${brokerLabels[opt.broker]||opt.broker||'--'} · ${accountLabels[opt.accountType]||opt.accountType||'--'}`;
                   return <button key={key} className={acctFilter===key?"active":""} onClick={()=>setAcctFilter(key)}>{label} ({opt.count})</button>;
                 })}
               </div>
@@ -1650,7 +1152,7 @@ const PortfolioScreen = ({ state, refresh, openModal, privacyMode }) => {
                 <th>{tl("portfolio.thAccount")}</th>
                 <th className="num" style={{cursor:"pointer", userSelect:"none"}} onClick={()=>handleSort('shares')}>{tl("portfolio.thShares")}{sortArrow('shares')}</th>
                 <th className="num" style={{cursor:"pointer", userSelect:"none"}} onClick={()=>handleSort('price')}>{tl("portfolio.thPrice")}{sortArrow('price')}</th>
-                <th className="num" style={{cursor:"pointer", userSelect:"none"}} onClick={()=>handleSort('change')}>{isEn()?'Change':'Ændring'}{sortArrow('change')}</th>
+                <th className="num" style={{cursor:"pointer", userSelect:"none"}} onClick={()=>handleSort('change')}>{isEn()?'Change':'AEndring'}{sortArrow('change')}</th>
                 <th style={{width:60, textAlign:"center"}}>{isEn()?'5D':'5D'}</th>
                 <th className="num" style={{cursor:"pointer", userSelect:"none"}} onClick={()=>handleSort('value')}>{tl("portfolio.thValue")}{sortArrow('value')}</th>
                 <th className="num" style={{cursor:"pointer", userSelect:"none"}} onClick={()=>handleSort('weight')}>{tl("portfolio.thWeight")}{sortArrow('weight')}</th>
@@ -1664,15 +1166,15 @@ const PortfolioScreen = ({ state, refresh, openModal, privacyMode }) => {
                 const rawValue = (h.shares||0) * (h.currentPrice||0);
                 const value = toDKK(rawValue, h.currency);
                 const weight = totalValue > 0 ? (value / totalValue * 100) : 0;
-                const broker = brokerLabels[h.broker]||h.broker||'—';
-                const acct = accountLabels[h.accountType]||h.accountType||'—';
+                const broker = brokerLabels[h.broker]||h.broker||'--';
+                const acct = accountLabels[h.accountType]||h.accountType||'--';
                 return (
                   <tr key={h.id || idx}>
                     <td><div className="ticker-mark" style={{background:tickerColor(idx)}}>{(h.ticker||'??').slice(0,2)}</div></td>
                     <td>
                       <div className="ticker-meta">
                         <div className="sym">{h.ticker}</div>
-                        <div className="name">{h.name || '—'}</div>
+                        <div className="name">{h.name || '--'}</div>
                       </div>
                     </td>
                     <td><span className="pill" style={{textTransform:"uppercase", fontSize:10, letterSpacing:"0.06em"}}>{h.type}</span></td>
@@ -1681,7 +1183,7 @@ const PortfolioScreen = ({ state, refresh, openModal, privacyMode }) => {
                     <td className="num">
                       {h.currency && h.currency !== (APP_STATE.currency || 'DKK') ? (
                         <>
-                          <div style={{fontFamily:"var(--font-mono)", fontSize:12.5}}>{h.currency === 'USD' ? '$' : h.currency === 'EUR' ? '€' : h.currency === 'GBP' ? '£' : ''}{(h.currentPrice||0).toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:2})}</div>
+                          <div style={{fontFamily:"var(--font-mono)", fontSize:12.5}}>{h.currency === 'USD' ? '$' : h.currency === 'EUR' ? '?' : h.currency === 'GBP' ? '?' : ''}{(h.currentPrice||0).toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:2})}</div>
                           <div style={{fontSize:9, color:"var(--text-muted)", fontFamily:"var(--font-mono)", marginTop:1}}>{fmtC(toDKK(h.currentPrice||0, h.currency))}</div>
                         </>
                       ) : (
@@ -1690,13 +1192,12 @@ const PortfolioScreen = ({ state, refresh, openModal, privacyMode }) => {
                     </td>
                     <td className="num">
                       {(() => {
-                        // Show daily change if available, otherwise total P&L from avg price
                         const daily = h.priceChangePercent;
                         const pnl = (h.avgPrice && h.avgPrice > 0 && h.currentPrice)
                           ? ((h.currentPrice - h.avgPrice) / h.avgPrice * 100) : null;
                         const val = daily != null ? daily : pnl;
                         const label = daily != null ? 'day' : (pnl != null ? 'total' : null);
-                        if (val == null) return <span style={{color:"var(--text-dim)", fontSize:11}}>—</span>;
+                        if (val == null) return <span style={{color:"var(--text-dim)", fontSize:11}}>&mdash;</span>;
                         return (
                           <div style={{display:"flex", flexDirection:"column", alignItems:"flex-end", gap:1}}>
                             <span style={{
@@ -1741,314 +1242,758 @@ const PortfolioScreen = ({ state, refresh, openModal, privacyMode }) => {
           </table>
         </div>
       </div>
-    </div>
+    </>
   );
 };
 
-// ==========================================================================
-// OVERLAP
-// ==========================================================================
-const OverlapScreen = ({ state, refresh, privacyMode }) => {
-  const [loading, setLoading] = useState(false);
-  const [hovered, setHovered] = useState(null);
-  const sectorRef = useRef(null);
-  const geoRef = useRef(null);
+// -- Assets & Liabilities Tab (from NetWorthScreen) --
+const AssetsTab = ({ state, refresh, openModal, privacyMode }) => {
+  const entries = state.entries || [];
+  const assets = entries.filter(e => e.type === 'asset');
+  const liabilities = entries.filter(e => e.type === 'liability');
+  const totalA = assets.reduce((s,e)=>s+e.amount, 0);
+  const totalL = liabilities.reduce((s,e)=>s+e.amount, 0);
+  const net = totalA - totalL;
 
-  const handleRunAnalysis = async () => {
-    if ((state.positions||[]).length < 2) {
-      alert(isEn() ? 'Need at least 2 positions.' : 'Du skal have mindst 2 positioner.');
-      return;
-    }
-    setLoading(true);
-    try {
-      await runOverlapAnalysis();
-      refresh();
-    } catch(err) {
-      alert(err.message);
-    }
-    setLoading(false);
+  const deleteEntry = (id) => {
+    APP_STATE.entries = APP_STATE.entries.filter(e => e.id !== id);
+    window.saveData();
+    if (window.syncPortfolioToNetWorth) syncPortfolioToNetWorth();
+    refresh();
   };
-
-  const data = state.overlapData;
-  const hasData = data && data.overlapMatrix;
-  const tickers = hasData ? Object.keys(data.overlapMatrix) : [];
-
-  // Get overlap value between two tickers
-  const getOverlap = (t1, t2) => {
-    if (!data?.overlapMatrix) return 0;
-    return (data.overlapMatrix[t1]?.[t2]) || (data.overlapMatrix[t2]?.[t1]) || 0;
-  };
-  const getHeatLevel = (val) => val <= 0 ? 0 : val < 10 ? 1 : val < 25 ? 2 : val < 40 ? 3 : 4;
 
   return (
-    <div className="screen active">
-      <div className="page-head">
-        <div>
-          <h1 className="page-title"><em>Overlap</em> {isEn()?'analysis':'analyse'}</h1>
-          <p className="page-subtitle">{tl("overlap.subtitle")}</p>
+    <>
+      <div className="waterfall" style={{marginBottom:20}}>
+        <div className="wf-col assets">
+          <span className="eyebrow">{tl("networth.assets")}</span>
+          <div className={`big${privacyMode ? ' sensitive' : ''}`} style={{color:"var(--pos)"}}>{fmtC(totalA)}</div>
+          <div style={{marginTop:8, fontSize:12, color:"var(--text-muted)"}}>{assets.length} {isEn()?'accounts':'konti'}</div>
         </div>
-        <div className="page-actions">
-          <button className="btn btn-accent" onClick={handleRunAnalysis} disabled={loading}>
-            <Icon name="play" size={15}/> {loading ? (isEn()?'Analyzing…':'Analyserer…') : tl("overlap.runAnalysis")}
-          </button>
+        <div className="wf-col liab">
+          <span className="eyebrow">{tl("networth.liabilities")}</span>
+          <div className={`big${privacyMode ? ' sensitive' : ''}`} style={{color: totalL>0?"var(--neg)":"var(--text)"}}>- {fmtC(totalL)}</div>
+          <div style={{marginTop:8, fontSize:12, color:"var(--text-muted)"}}>{liabilities.length} {isEn()?'obligations':'forpligtelser'}</div>
+        </div>
+        <div className="wf-col net">
+          <span className="eyebrow">{tl("networth.netWorth")}</span>
+          <div className={`big${privacyMode ? ' sensitive' : ''}`}>{fmtC(net)}</div>
         </div>
       </div>
 
-      {!hasData ? (
-        <div className="card" style={{textAlign:"center", padding:60}}>
-          <Icon name="overlap" size={48} style={{color:"var(--text-dim)", marginBottom:16}}/>
-          <h3 style={{margin:"0 0 8px"}}>{tl("overlap.emptyTitle")}</h3>
-          <p style={{color:"var(--text-muted)"}}>{tl("overlap.emptyDesc")}</p>
-        </div>
-      ) : (
-        <>
-          <div className="card" style={{marginBottom:20}}>
-            <div className="card-head">
-              <div>
-                <h3 className="card-title">{tl("overlap.matrix")}</h3>
-                <div style={{fontSize:12, color:"var(--text-dim)", marginTop:4}}>
-                  {isEn() ? "Percentage of shared underlying holdings between each pair" : "Procentdel af delte underliggende beholdninger mellem hvert par"}
-                </div>
-              </div>
-              <div style={{display:"flex", alignItems:"center", gap:6, fontSize:11, color:"var(--text-muted)"}}>
-                <span>{isEn()?'Low':'Lav'}</span>
-                <div style={{display:"flex", gap:2}}>
-                  {[0,1,2,3,4].map(v => <div key={v} style={{width:16, height:16, borderRadius:3,
-                    background: v===0?"var(--bg-sunk)":v===1?"oklch(0.95 0.04 55)":v===2?"oklch(0.88 0.09 55)":v===3?"oklch(0.78 0.14 50)":"oklch(0.64 0.17 48)"}}/>)}
-                </div>
-                <span>{isEn()?'High':'Høj'}</span>
-              </div>
+      <div className="grid grid-2">
+        <div className="card">
+          <div className="card-head">
+            <div>
+              <h3 className="card-title">{tl("networth.assets")}</h3>
+              <div style={{fontSize:12, color:"var(--text-dim)", marginTop:4}}>{assets.length} {isEn()?'accounts':'konti'}</div>
             </div>
-
-            <div className="matrix-wrap">
-              <table className="matrix">
-                <thead>
-                  <tr>
-                    <th></th>
-                    {tickers.map(t => <th key={t} style={{writingMode:"vertical-rl", transform:"rotate(180deg)", height:80}}>{t}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {tickers.map((row, i) => (
-                    <tr key={row}>
-                      <th className="row-head">{row}</th>
-                      {tickers.map((col, j) => {
-                        if (i === j) return <td key={j} className="diag">—</td>;
-                        const val = getOverlap(row, col);
-                        const level = getHeatLevel(val);
-                        const isHov = hovered && (hovered[0]===i || hovered[1]===j);
-                        return (
-                          <td key={j} data-v={level}
-                            onMouseEnter={()=>setHovered([i,j])}
-                            onMouseLeave={()=>setHovered(null)}
-                            style={{opacity: hovered && !isHov ? 0.4 : 1, fontSize:10}}
-                            title={`${row} × ${col}: ${val.toFixed(1)}%`}
-                          >{val <= 0 ? "·" : val.toFixed(0)+"%"}</td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Sector & Geo charts rendered via Chart.js in canvas elements */}
-          <div className="grid grid-2">
-            <div className="card">
-              <h3 className="card-title" style={{marginBottom:16}}>{tl("overlap.sectorExposure")}</h3>
-              <div style={{height:280}}><canvas id="chart-sectors" ref={el => {
-                if (el && data) setTimeout(() => window.renderSectorChart && renderSectorChart(data), 100);
-              }}></canvas></div>
-            </div>
-            <div className="card">
-              <h3 className="card-title" style={{marginBottom:16}}>{tl("overlap.geoExposure")}</h3>
-              <div style={{height:280}}><canvas id="chart-geo" ref={el => {
-                if (el && data) setTimeout(() => window.renderGeoChart && renderGeoChart(data), 100);
-              }}></canvas></div>
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  );
-};
-
-// ==========================================================================
-// SCORE
-// ==========================================================================
-const ScoreScreen = ({ state, refresh, privacyMode }) => {
-  const [active, setActive] = useState(state.philosophy || "bogle");
-  const scoreData = useMemo(() => {
-    APP_STATE.philosophy = active;
-    return window.computePortfolioScore ? computePortfolioScore() : null;
-  }, [state.positions?.length, state.overlapData, active]);
-
-  const philosophies = [
-    { id:"bogle", name:"Bogle", tag:"Index", desc: isEn()?"Low cost, broad diversification":"Lav omkostning, bred diversificering" },
-    { id:"buffett", name:"Buffett", tag:"Value", desc: isEn()?"Quality, deep moat, long-term":"Kvalitet, dyb voldgrav, langsigtet" },
-    { id:"dalio", name:"Dalio", tag:"Macro", desc: isEn()?"All-weather, risk parity":"All-weather, risiko-paritet" },
-    { id:"lynch", name:"Lynch", tag:"Growth", desc: isEn()?"Growth at a reasonable price":"Vækst til rimelig pris (GARP)" },
-  ];
-
-  return (
-    <div className="screen active">
-      <div className="page-head">
-        <div>
-          <h1 className="page-title">{isEn() ? <>Portfolio <em>score</em></> : <>Portefølje-<em>score</em></>}</h1>
-          <p className="page-subtitle">{tl("score.subtitle")}</p>
-        </div>
-      </div>
-
-      <div style={{marginBottom:8}}>
-        <div className="eyebrow" style={{marginBottom:10}}>{tl("score.choosePhilosophy")}</div>
-        <div className="philosophies">
-          {philosophies.map(ph => (
-            <button key={ph.id} className={"philosophy " + (active===ph.id?"active":"")} onClick={()=>{setActive(ph.id); APP_STATE.philosophy=ph.id; window.savePreferences();}}>
-              <div className="p-head">
-                <div className="p-name">{ph.name}</div>
-                <span className="p-tag">{ph.tag}</span>
-              </div>
-              <div className="p-desc">{ph.desc}</div>
-              {scoreData && active===ph.id && (
-                <div style={{marginTop:12, display:"flex", alignItems:"baseline", gap:6}}>
-                  <span className="num" style={{fontFamily:"var(--font-mono)", fontSize:20, fontWeight:600}}>{scoreData.total}</span>
-                  <span style={{fontSize:11, opacity:0.7}}>/100</span>
-                </div>
-              )}
+            <button className="btn btn-sm" onClick={()=>openModal('entry', {type:'asset'})}>
+              <Icon name="plus" size={14}/> {isEn()?'Add':'Tilfoej'}
             </button>
-          ))}
+          </div>
+          {assets.length === 0 ? <div style={{color:"var(--text-dim)", fontSize:13}}>{tl("networth.noAssets")}</div> :
+            assets.map(a => {
+              const catLabels = { cash: isEn()?'Bank account':'Bankkonto', savings: isEn()?'Savings':'Opsparing', investment: isEn()?'Investment':'Investering', property: isEn()?'Property':'Ejendom', pension: 'Pension', vehicle: isEn()?'Vehicle':'Koretoj', other_asset: isEn()?'Other':'Andet' };
+              const catIcons = { cash:'dollar', savings:'shield', investment:'trending', property:'home', pension:'briefcase', vehicle:'zap', other_asset:'briefcase' };
+              return (
+                <div key={a.id} className="line-row">
+                  <div className="line-mark"><Icon name={a.autoSynced?"zap":(catIcons[a.category]||"dollar")}/></div>
+                  <div style={{flex:1, minWidth:0}}>
+                    <div className="line-name">{a.name}</div>
+                    <div className="line-sub">
+                      {catLabels[a.category]||a.category}
+                      {a.interestRate ? ` · ${a.interestRate}%` : ''}
+                      {a.notes ? ` · ${a.notes}` : ''}
+                      {a.autoSynced ? (isEn()?' · Auto-synced':' · Auto-synkroniseret') : ''}
+                    </div>
+                  </div>
+                  <div className={`line-val${privacyMode ? ' sensitive' : ''}`} style={{color:"var(--pos)"}}>{fmtC(a.amount)}</div>
+                  <div className="line-actions">
+                    <button className="icon-btn" style={{width:28, height:28}} onClick={()=>openModal('entry', a)}><Icon name="edit" size={13}/></button>
+                    <button className="icon-btn" style={{width:28, height:28}} onClick={()=>deleteEntry(a.id)}><Icon name="trash" size={13}/></button>
+                  </div>
+                </div>
+              );
+            })
+          }
+        </div>
+
+        <div className="card">
+          <div className="card-head">
+            <div>
+              <h3 className="card-title">{tl("networth.liabilities")}</h3>
+              <div style={{fontSize:12, color:"var(--text-dim)", marginTop:4}}>{liabilities.length} {isEn()?'active':'aktive'}</div>
+            </div>
+            <button className="btn btn-sm" onClick={()=>openModal('entry', {type:'liability'})}>
+              <Icon name="plus" size={14}/> {isEn()?'Add':'Tilfoej'}
+            </button>
+          </div>
+          {liabilities.length === 0 ? <div style={{color:"var(--text-dim)", fontSize:13}}>{tl("networth.noLiabilities")}</div> :
+            liabilities.map(a => {
+              const catLabels = { mortgage: isEn()?'Mortgage':'Realkreditlaan', student_loan: isEn()?'Student loan':'Studielaan', car_loan: isEn()?'Car loan':'Billaan', credit_card: isEn()?'Credit card':'Kreditkort', other_liability: isEn()?'Other':'Andet' };
+              const catIcons = { mortgage:'home', student_loan:'edit', car_loan:'zap', credit_card:'alert', other_liability:'briefcase' };
+              return (
+                <div key={a.id} className="line-row">
+                  <div className="line-mark"><Icon name={catIcons[a.category]||"briefcase"}/></div>
+                  <div style={{flex:1, minWidth:0}}>
+                    <div className="line-name">{a.name}</div>
+                    <div className="line-sub">
+                      {catLabels[a.category]||a.category}
+                      {a.interestRate ? ` · ${a.interestRate}%` : ''}
+                      {a.notes ? ` · ${a.notes}` : ''}
+                    </div>
+                  </div>
+                  <div className={`line-val${privacyMode ? ' sensitive' : ''}`} style={{color:"var(--neg)"}}>- {fmtC(a.amount)}</div>
+                  <div className="line-actions">
+                    <button className="icon-btn" style={{width:28, height:28}} onClick={()=>openModal('entry', a)}><Icon name="edit" size={13}/></button>
+                    <button className="icon-btn" style={{width:28, height:28}} onClick={()=>deleteEntry(a.id)}><Icon name="trash" size={13}/></button>
+                  </div>
+                </div>
+              );
+            })
+          }
+        </div>
+      </div>
+    </>
+  );
+};
+
+// -- Pension Tab (from PensionScreen) --
+const PensionTab = ({ state, refresh, openModal, activeMember, privacyMode }) => {
+  const isHousehold = activeMember === 'household';
+  const pensionEntries = (state.entries || []).filter(e => e.category === 'pension');
+  const currentPension = pensionEntries.reduce((s, e) => s + (e.amount || 0), 0);
+
+  const configKey = activeMember && activeMember !== 'me' && activeMember !== 'household'
+    ? `pi-pension-config-${activeMember}` : 'pi-pension-config';
+  const defaults = { monthly: 2000, match: 0, currentAge: 39, retireAge: 67, lumpSum: 0 };
+
+  const householdMembers = useMemo(() => loadHousehold(), []);
+  const aggregatedConfig = useMemo(() => {
+    if (!isHousehold) return null;
+    const loadCfg = (key) => {
+      try { return { ...defaults, ...(JSON.parse(localStorage.getItem(key)) || {}) }; } catch { return defaults; }
+    };
+    const myCfg = loadCfg('pi-pension-config');
+    const allCfgs = [{ label: 'Me', cfg: myCfg }];
+    householdMembers.forEach(m => {
+      allCfgs.push({ label: m.name, cfg: loadCfg(`pi-pension-config-${m.id}`) });
+    });
+    const totalLump = allCfgs.reduce((s, c) => s + (c.cfg.lumpSum || 0), 0);
+    const totalMonthly = allCfgs.reduce((s, c) => s + (c.cfg.monthly || 0) * (1 + (c.cfg.match || 0) / 100), 0);
+    const youngestAge = Math.min(...allCfgs.map(c => c.cfg.currentAge || 39));
+    const latestRetire = Math.max(...allCfgs.map(c => c.cfg.retireAge || 67));
+    return { lumpSum: totalLump, monthly: totalMonthly, match: 0, currentAge: youngestAge, retireAge: latestRetire, members: allCfgs };
+  }, [isHousehold, householdMembers]);
+
+  const [config, setConfig] = useState(() => {
+    if (isHousehold && aggregatedConfig) return { ...defaults, ...aggregatedConfig };
+    try { return { ...defaults, ...(JSON.parse(localStorage.getItem(configKey)) || {}) }; } catch { return defaults; }
+  });
+  const [activeScenario, setActiveScenario] = useState(1);
+  const [hoverYear, setHoverYear] = useState(null);
+
+  const updateConfig = (key, val) => {
+    if (isHousehold) return;
+    const next = { ...config, [key]: parseFloat(val) || 0 };
+    setConfig(next);
+    try { localStorage.setItem(configKey, JSON.stringify(next)); } catch {}
+  };
+
+  const effectiveConfig = isHousehold && aggregatedConfig ? aggregatedConfig : config;
+  const yearsToRetire = Math.max(0, (effectiveConfig.retireAge || 67) - (effectiveConfig.currentAge || 30));
+  const totalMonthlyWithMatch = isHousehold ? (aggregatedConfig?.monthly || 0) : (config.monthly || 0) * (1 + (config.match || 0) / 100);
+  const totalCurrentPension = currentPension + (effectiveConfig.lumpSum || 0);
+
+  const scenarios = useMemo(() =>
+    window.computePensionProjection
+      ? computePensionProjection(totalCurrentPension,
+          isHousehold ? totalMonthlyWithMatch : config.monthly,
+          isHousehold ? 0 : config.match,
+          effectiveConfig.retireAge, effectiveConfig.currentAge)
+      : [],
+    [totalCurrentPension, config.monthly, config.match, effectiveConfig.retireAge, effectiveConfig.currentAge, totalMonthlyWithMatch, isHousehold]
+  );
+
+  const scenarioColors = ["oklch(0.60 0.14 45)", "oklch(0.55 0.16 145)", "oklch(0.55 0.14 265)"];
+  const scenarioNames = ["Conservative", "Moderate", "Aggressive"];
+  const scenarioNamesDa = ["Konservativ", "Moderat", "Aggressiv"];
+  const scenarioIcons = ["shield", "target", "zap"];
+
+  const maxVal = scenarios.length ? Math.max(...scenarios.flatMap(s => s.points.map(p => p.value))) : 0;
+  const chartW = 640, chartH = 260, padL = 70, padR = 20, padT = 24, padB = 36;
+  const plotW = chartW - padL - padR, plotH = chartH - padT - padB;
+  const monthlyIncome = scenarios.length > 0 ? Math.round(scenarios[activeScenario].finalValue * 0.04 / 12) : 0;
+
+  const inputStyle = {
+    width: "100%", padding: "10px 14px", borderRadius: 10,
+    border: "1px solid var(--border)", background: "var(--bg-sunk)",
+    color: "var(--text)", fontFamily: "var(--font-mono)", fontSize: 16,
+    fontWeight: 500, textAlign: "right", outline: "none", transition: "border-color 0.2s",
+  };
+  const labelStyle = { fontSize: 12, color: "var(--text-dim)", marginBottom: 6, display: "block", fontWeight: 500 };
+
+  return (
+    <>
+      {/* Hero KPI row */}
+      <div className="grid grid-12" style={{marginBottom: 24}}>
+        <div className="card col-3 stat">
+          <div className="eyebrow">{isEn() ? 'Current pension' : 'Nuvaerende pension'}</div>
+          <div className="value" style={{fontSize: 28}}>{fmtC(totalCurrentPension)}</div>
+          <div style={{fontSize: 11, color: "var(--text-dim)", marginTop: 4}}>
+            {totalCurrentPension > 0 ? (isEn() ? 'starting balance' : 'startsaldo') : (isEn() ? 'set below' : 'indstil nedenfor')}
+          </div>
+        </div>
+        <div className="card col-3 stat">
+          <div className="eyebrow">{isEn() ? 'Years to retirement' : 'AAr til pension'}</div>
+          <div className="value" style={{fontSize: 28}}>{yearsToRetire}</div>
+          <div style={{fontSize: 11, color: "var(--text-dim)", marginTop: 4}}>
+            {isEn() ? `Age ${effectiveConfig.currentAge} -> ${effectiveConfig.retireAge}` : `Alder ${effectiveConfig.currentAge} -> ${effectiveConfig.retireAge}`}
+          </div>
+        </div>
+        <div className="card col-3 stat">
+          <div className="eyebrow">{isEn() ? 'Monthly savings' : 'Maanedlig opsparing'}</div>
+          <div className={`value${privacyMode ? ' sensitive' : ''}`} style={{fontSize: 28}}>{fmtC(totalMonthlyWithMatch)}</div>
+          <div style={{fontSize: 11, color: "var(--text-dim)", marginTop: 4}}>
+            {config.match > 0 ? (isEn() ? `incl. ${config.match}% match` : `inkl. ${config.match}% match`) : (isEn() ? 'your contribution' : 'dit bidrag')}
+          </div>
+        </div>
+        <div className="card col-3 stat">
+          <div className="eyebrow">{isEn() ? 'Est. monthly income' : 'Est. maanedlig indkomst'}</div>
+          <div className={`value${privacyMode ? ' sensitive' : ''}`} style={{fontSize: 28, color: "var(--pos)"}}>{fmtC(monthlyIncome)}</div>
+          <div style={{fontSize: 11, color: "var(--text-dim)", marginTop: 4}}>
+            {isEn() ? '4% withdrawal rule' : '4% udtraekningsregel'}
+          </div>
         </div>
       </div>
 
-      {!scoreData ? (
-        <div className="card" style={{textAlign:"center", padding:60}}>
-          <Icon name="activity" size={48} style={{color:"var(--text-dim)", marginBottom:16}}/>
-          <h3 style={{margin:"0 0 8px"}}>{tl("score.emptyTitle")}</h3>
-          <p style={{color:"var(--text-muted)"}}>{tl("score.emptyDesc")}</p>
+      {/* Settings card */}
+      <div className="card" style={{marginBottom: 24}}>
+        <div className="card-head">
+          <h3 className="card-title"><Icon name="sliders" size={15} style={{marginRight: 6, opacity: 0.5}}/>{isHousehold ? (isEn() ? 'Household breakdown' : 'Husstandsoversigt') : (isEn() ? 'Projection settings' : 'Fremskrivningsindstillinger')}</h3>
         </div>
-      ) : (
-        <div className="grid grid-12" style={{marginTop:20}}>
-          <div className="card col-5">
-            <div className="card-head">
-              <div>
-                <div className="eyebrow">{isEn()?'Your score':'Din score'}</div>
-                <h3 className="card-title" style={{fontSize:18, marginTop:4}}>{philosophies.find(p=>p.id===active)?.name} {isEn()?'philosophy':'filosofi'}</h3>
-              </div>
-            </div>
-            <div className="gauge-wrap">
-              <Gauge value={scoreData.total} max={100} size={280}/>
-            </div>
-            <div style={{marginTop:12, padding:14, background:"var(--bg-raised)", borderRadius:"var(--r-md)", fontSize:13, color:"var(--text-muted)", textAlign:"center"}}>
-              <strong style={{color:"var(--text)"}}>{scoreData.label}.</strong> {philosophies.find(p=>p.id===active)?.desc}
-            </div>
-          </div>
-
-          <div className="card col-7">
-            <div className="card-head">
-              <h3 className="card-title">{isEn()?'Score breakdown':'Score-opdeling'}</h3>
-              <div style={{fontSize:11, color:"var(--text-dim)", fontFamily:"var(--font-mono)"}}>{Object.keys(scoreData.scores).length} {isEn()?'dimensions':'dimensioner'} · {isEn()?'weighted by philosophy':'vægtet efter filosofi'}</div>
-            </div>
-            <div style={{display:"grid", gap:18}}>
-              {Object.values(scoreData.scores).map((r, i) => {
-                const pct = r.score / r.max * 100;
-                const tone = pct >= 70 ? "strong" : pct < 40 ? "weak" : "";
+        {isHousehold && aggregatedConfig ? (
+          <>
+            <div style={{display: "grid", gridTemplateColumns: `repeat(${aggregatedConfig.members.length}, 1fr)`, gap: 16, marginBottom: 16}}>
+              {aggregatedConfig.members.map((m, i) => {
+                const c = m.cfg;
+                const mMonthly = (c.monthly || 0) * (1 + (c.match || 0) / 100);
                 return (
-                  <div key={i} className="sbr-col">
-                    <div className="sbr-head">
-                      <div className="sbr-title">{r.label}</div>
-                      <div className="sbr-val"><strong style={{color:"var(--text)", fontSize:14}}>{r.score}</strong> / {r.max}</div>
+                  <div key={i} style={{padding: 16, borderRadius: 12, background: "var(--bg-sunk)", border: "1px solid var(--border)"}}>
+                    <div style={{fontWeight: 600, fontSize: 13, marginBottom: 10, display: "flex", alignItems: "center", gap: 6}}>
+                      <Icon name={i === 0 ? "user" : (householdMembers[i-1]?.role === 'child' ? "baby" : "user")} size={14} style={{opacity: 0.5}} />
+                      {m.label}
                     </div>
-                    <div className="sbr-track">
-                      <div className={"sbr-fill " + tone} style={{width: pct+"%"}}/>
+                    <div style={{display: "grid", gap: 8}}>
+                      <div style={{display: "flex", justifyContent: "space-between", fontSize: 12}}>
+                        <span style={{color: "var(--text-dim)"}}>{isEn() ? 'Savings' : 'Opsparing'}</span>
+                        <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily: "var(--font-mono)", fontWeight: 500}}>{fmtC(c.lumpSum || 0)}</span>
+                      </div>
+                      <div style={{display: "flex", justifyContent: "space-between", fontSize: 12}}>
+                        <span style={{color: "var(--text-dim)"}}>{isEn() ? 'Monthly' : 'Maanedlig'}</span>
+                        <span className={privacyMode ? 'sensitive' : ''} style={{fontFamily: "var(--font-mono)", fontWeight: 500}}>{fmtC(mMonthly)}</span>
+                      </div>
+                      <div style={{display: "flex", justifyContent: "space-between", fontSize: 12}}>
+                        <span style={{color: "var(--text-dim)"}}>{isEn() ? 'Age' : 'Alder'}</span>
+                        <span style={{fontFamily: "var(--font-mono)", fontWeight: 500}}>{c.currentAge || 39} -> {c.retireAge || 67}</span>
+                      </div>
                     </div>
-                    <div className="sbr-note">{r.detail}</div>
                   </div>
                 );
               })}
             </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// ==========================================================================
-// REBALANCE
-// ==========================================================================
-const RebalanceScreen = ({ state, refresh, privacyMode }) => {
-  const [done, setDone] = useState({});
-  const suggestions = useMemo(() => window.computeRebalanceSuggestions ? computeRebalanceSuggestions() : [], [state.positions?.length, state.overlapData]);
-  const totalValue = (state.positions||[]).reduce((s,p)=>s+toDKK((p.shares||0)*(p.currentPrice||0), p.currency), 0);
-
-  const typeIcons = { warning:"alert", tax:"tax", risk:"pie", overlap:"overlap" };
-
-  return (
-    <div className="screen active">
-      <div className="page-head">
-        <div>
-          <h1 className="page-title"><em>{tl("rebalance.title")}</em></h1>
-          <p className="page-subtitle">{tl("rebalance.subtitle")}</p>
-        </div>
-      </div>
-
-      <div className="grid grid-12" style={{marginBottom:20}}>
-        <div className="card col-4 stat">
-          <div className="eyebrow">{isEn()?'Actions queued':'Handlinger i kø'}</div>
-          <div className="value">{suggestions.length - Object.values(done).filter(Boolean).length}</div>
-          <div className="sub">
-            <span style={{color:"var(--neg)"}}>{suggestions.filter(s=>s.priority==="high").length} {isEn()?'high':'høj'}</span> ·
-            <span style={{color:"var(--warn)"}}> {suggestions.filter(s=>s.priority==="medium").length} {isEn()?'medium':'mellem'}</span> ·
-            <span style={{color:"var(--text-muted)"}}> {suggestions.filter(s=>s.priority==="low").length} {isEn()?'low':'lav'}</span>
-          </div>
-        </div>
-        <div className="card col-4 stat">
-          <div className="eyebrow">{isEn()?'Portfolio value':'Porteføljeværdi'}</div>
-          <div className="value">{fmtC(totalValue)}</div>
-        </div>
-        <div className="card col-4 stat">
-          <div className="eyebrow">{isEn()?'Total positions':'Samlede positioner'}</div>
-          <div className="value">{(state.positions||[]).length}</div>
-        </div>
-      </div>
-
-      {suggestions.length === 0 ? (
-        <div className="card" style={{textAlign:"center", padding:60}}>
-          <Icon name="balance" size={48} style={{color:"var(--text-dim)", marginBottom:16}}/>
-          <h3 style={{margin:"0 0 8px"}}>{tl("rebalance.emptyTitle")}</h3>
-          <p style={{color:"var(--text-muted)"}}>{tl("rebalance.emptyDesc")}</p>
-        </div>
-      ) : (
-        <div style={{display:"grid", gap:12}}>
-          {suggestions.map((s, i) => (
-            <div key={i} className={"insight " + (s.priority==="high"?"alert":s.priority==="medium"?"warn":"good")} style={{opacity: done[i]?0.5:1}}>
-              <div className="insight-icon"><Icon name={typeIcons[s.type]||"info"} size={18}/></div>
-              <div className="insight-body">
-                <div className="insight-title">
-                  {s.title}
-                  <span className={"severity " + (s.priority==="high"?"high":s.priority==="medium"?"med":"low")}>{s.priority}</span>
-                  <span style={{fontSize:11, color:"var(--text-dim)", marginLeft:"auto", fontFamily:"var(--font-mono)", fontWeight:400}}>#{String(i+1).padStart(2,"0")}</span>
+            <div style={{fontSize: 11, color: "var(--text-dim)", textAlign: "center", padding: "4px 0"}}>
+              {isEn() ? 'Projection uses combined savings & contributions. Switch to an individual member to edit.' : 'Fremskrivning bruger samlede opsparinger. Skift til et enkelt medlem for at redigere.'}
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginBottom: 20}}>
+              <div>
+                <label style={labelStyle}>{isEn() ? 'Current pension savings' : 'Nuvaerende pensionsopsparing'}</label>
+                <input type="number" value={config.lumpSum || ''} step="10000" min="0"
+                  placeholder={isEn() ? 'e.g. 250000' : 'f.eks. 250000'}
+                  onChange={e => updateConfig('lumpSum', e.target.value)}
+                  onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
+                  style={inputStyle} />
+                <div style={{fontSize: 10, color: "var(--text-dim)", marginTop: 4, textAlign: "right"}}>{isEn() ? 'total saved so far (kr.)' : 'samlet opsparet (kr.)'}</div>
+              </div>
+              <div>
+                <label style={labelStyle}>{isEn() ? 'Monthly contribution' : 'Maanedligt bidrag'}</label>
+                <input type="number" value={config.monthly} step="500"
+                  onChange={e => updateConfig('monthly', e.target.value)}
+                  onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
+                  style={inputStyle} />
+                <div style={{fontSize: 10, color: "var(--text-dim)", marginTop: 4, textAlign: "right"}}>kr. / {isEn() ? 'month' : 'maaned'}</div>
+              </div>
+              <div>
+                <label style={labelStyle}>{isEn() ? 'Employer match' : 'Arbejdsgiver match'}</label>
+                <input type="number" value={config.match} step="1" min="0" max="100"
+                  onChange={e => updateConfig('match', e.target.value)}
+                  onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
+                  style={inputStyle} />
+                <div style={{fontSize: 10, color: "var(--text-dim)", marginTop: 4, textAlign: "right"}}>%</div>
+              </div>
+            </div>
+            <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20}}>
+              <div>
+                <label style={labelStyle}>{isEn() ? 'Current age' : 'Nuvaerende alder'}: <strong style={{color: "var(--text)"}}>{config.currentAge}</strong></label>
+                <input type="range" min="18" max="65" value={config.currentAge}
+                  onChange={e => updateConfig('currentAge', e.target.value)}
+                  style={{width: "100%", marginTop: 8, accentColor: "var(--accent)"}} />
+                <div style={{display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-dim)", marginTop: 2}}>
+                  <span>18</span><span>65</span>
                 </div>
-                <div className="insight-text">{s.detail}</div>
-                <div style={{display:"flex", gap:8, marginTop:12}}>
-                  <button className="btn btn-sm btn-ghost" onClick={()=>setDone({...done, [i]:!done[i]})}>
-                    <Icon name="check" size={13}/> {done[i]?(isEn()?'Done':'Færdig'):(isEn()?'Mark done':'Markér færdig')}
-                  </button>
+              </div>
+              <div>
+                <label style={labelStyle}>{isEn() ? 'Retirement age' : 'Pensionsalder'}: <strong style={{color: "var(--text)"}}>{config.retireAge}</strong></label>
+                <input type="range" min="55" max="80" value={config.retireAge}
+                  onChange={e => updateConfig('retireAge', e.target.value)}
+                  style={{width: "100%", marginTop: 8, accentColor: "var(--accent)"}} />
+                <div style={{display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-dim)", marginTop: 2}}>
+                  <span>55</span><span>80</span>
                 </div>
               </div>
             </div>
-          ))}
+          </>
+        )}
+      </div>
+
+      {/* Scenario cards */}
+      {scenarios.length > 0 && (
+        <>
+          <div className="grid grid-12" style={{marginBottom: 24}}>
+            {scenarios.map((s, i) => {
+              const isActive = activeScenario === i;
+              const growthPct = s.totalContributed > 0 ? ((s.totalGrowth / s.totalContributed) * 100) : 0;
+              const contribFrac = s.finalValue > 0 ? (s.totalContributed / s.finalValue * 100) : 0;
+              return (
+                <div key={i} className="card col-4" onClick={() => setActiveScenario(i)}
+                  style={{
+                    cursor: "pointer", transition: "all 0.25s",
+                    borderColor: isActive ? scenarioColors[i] : "var(--border)",
+                    boxShadow: isActive ? `0 0 0 1px ${scenarioColors[i]}, 0 4px 20px ${scenarioColors[i]}22` : "none",
+                    opacity: isActive ? 1 : 0.7,
+                    transform: isActive ? "translateY(-2px)" : "none",
+                  }}>
+                  <div style={{display: "flex", alignItems: "center", gap: 8, marginBottom: 14}}>
+                    <div style={{width: 32, height: 32, borderRadius: 8, background: `${scenarioColors[i]}18`, display: "flex", alignItems: "center", justifyContent: "center"}}>
+                      <Icon name={scenarioIcons[i]} size={16} style={{color: scenarioColors[i]}} />
+                    </div>
+                    <div>
+                      <div style={{fontWeight: 600, fontSize: 13}}>{isEn() ? scenarioNames[i] : scenarioNamesDa[i]}</div>
+                      <div style={{fontSize: 11, color: "var(--text-dim)", fontFamily: "var(--font-mono)"}}>{(s.rate * 100).toFixed(0)}% p.a.</div>
+                    </div>
+                    {isActive && <div style={{marginLeft: "auto", width: 8, height: 8, borderRadius: "50%", background: scenarioColors[i]}} />}
+                  </div>
+                  <div className={`value${privacyMode ? ' sensitive' : ''}`} style={{fontSize: 26, marginBottom: 8}}>{fmtC(s.finalValue)}</div>
+                  <div style={{height: 6, borderRadius: 3, overflow: "hidden", display: "flex", background: "var(--bg-sunk)", marginBottom: 10}}>
+                    <div style={{width: `${contribFrac}%`, background: "var(--text-muted)", opacity: 0.4, transition: "width 0.3s"}} />
+                    <div style={{flex: 1, background: scenarioColors[i], opacity: 0.5, transition: "width 0.3s"}} />
+                  </div>
+                  <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8}}>
+                    <div>
+                      <div style={{fontSize: 10, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em"}}>{isEn() ? 'Contributed' : 'Indbetalt'}</div>
+                      <div className={privacyMode ? 'sensitive' : ''} style={{fontSize: 13, fontWeight: 500, fontFamily: "var(--font-mono)"}}>{fmtC(s.totalContributed)}</div>
+                    </div>
+                    <div>
+                      <div style={{fontSize: 10, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em"}}>{isEn() ? 'Growth' : 'Afkast'}</div>
+                      <div className={privacyMode ? 'sensitive' : ''} style={{fontSize: 13, fontWeight: 500, fontFamily: "var(--font-mono)", color: "var(--pos)"}}>{fmtC(s.totalGrowth)} <span style={{fontSize: 10, opacity: 0.7}}>({growthPct.toFixed(0)}%)</span></div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Interactive projection chart */}
+          <div className="card">
+            <div className="card-head">
+              <h3 className="card-title">{isEn() ? 'Projection to retirement' : 'Fremskrivning til pension'}</h3>
+              <div style={{display: "flex", gap: 14}}>
+                {scenarios.map((s, i) => (
+                  <span key={i} onClick={() => setActiveScenario(i)} style={{
+                    display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 11,
+                    opacity: activeScenario === i ? 1 : 0.45, transition: "opacity 0.2s",
+                    fontWeight: activeScenario === i ? 600 : 400,
+                  }}>
+                    <span style={{width: 8, height: 8, borderRadius: 2, background: scenarioColors[i]}} />
+                    {(s.rate * 100).toFixed(0)}%
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div style={{position: "relative"}}>
+              <svg viewBox={`0 0 ${chartW} ${chartH}`} style={{width: "100%", height: 300}}
+                onMouseLeave={() => setHoverYear(null)}>
+                {[0, 0.25, 0.5, 0.75, 1].map(frac => {
+                  const val = maxVal * frac;
+                  const y = padT + plotH - (frac * plotH);
+                  return (
+                    <g key={frac}>
+                      <line x1={padL} x2={chartW - padR} y1={y} y2={y} stroke="var(--border)" strokeWidth="0.5" strokeDasharray="4,3" />
+                      <text x={padL - 8} y={y + 4} textAnchor="end" fontSize="9" fill="var(--text-dim)" fontFamily="var(--font-mono)">{fmtC(val)}</text>
+                    </g>
+                  );
+                })}
+                {scenarios.map((s, si) => {
+                  const isActive = activeScenario === si;
+                  const pts = s.points.map((p, pi) => {
+                    const x = padL + (pi / Math.max(1, s.points.length - 1)) * plotW;
+                    const y = padT + plotH - (maxVal > 0 ? (p.value / maxVal) * plotH : 0);
+                    return `${x},${y}`;
+                  }).join(' ');
+                  const firstX = padL, lastX = padL + plotW, baseline = padT + plotH;
+                  return (
+                    <g key={si} style={{transition: "opacity 0.3s", opacity: isActive ? 1 : 0.2}}>
+                      <polygon points={`${firstX},${baseline} ${pts} ${lastX},${baseline}`} fill={scenarioColors[si]} opacity={isActive ? 0.12 : 0.05} />
+                      <polyline points={pts} fill="none" stroke={scenarioColors[si]} strokeWidth={isActive ? 2.5 : 1.5} />
+                      {s.points.length > 0 && (() => {
+                        const lastPt = s.points[s.points.length - 1];
+                        const lx = padL + plotW;
+                        const ly = padT + plotH - (maxVal > 0 ? (lastPt.value / maxVal) * plotH : 0);
+                        return isActive ? <circle cx={lx} cy={ly} r={4} fill={scenarioColors[si]} stroke="var(--bg-card)" strokeWidth="2" /> : null;
+                      })()}
+                    </g>
+                  );
+                })}
+                {scenarios[0]?.points.map((p, pi) => {
+                  const x = padL + (pi / Math.max(1, scenarios[0].points.length - 1)) * plotW;
+                  const w = plotW / Math.max(1, scenarios[0].points.length - 1);
+                  return (
+                    <rect key={pi} x={x - w / 2} y={padT} width={w} height={plotH}
+                      fill="transparent" style={{cursor: "crosshair"}}
+                      onMouseEnter={() => setHoverYear(pi)} />
+                  );
+                })}
+                {hoverYear != null && scenarios[0]?.points[hoverYear] && (() => {
+                  const x = padL + (hoverYear / Math.max(1, scenarios[0].points.length - 1)) * plotW;
+                  const activeS = scenarios[activeScenario];
+                  const pt = activeS.points[hoverYear];
+                  const y = padT + plotH - (maxVal > 0 ? (pt.value / maxVal) * plotH : 0);
+                  return (
+                    <g>
+                      <line x1={x} x2={x} y1={padT} y2={padT + plotH} stroke="var(--text-muted)" strokeWidth="1" strokeDasharray="3,3" opacity="0.5" />
+                      <circle cx={x} cy={y} r={5} fill={scenarioColors[activeScenario]} stroke="var(--bg-card)" strokeWidth="2" />
+                      <rect x={x - 50} y={y - 28} width={100} height={22} rx={6} fill="var(--bg-raised)" stroke="var(--border)" strokeWidth="0.5" />
+                      <text x={x} y={y - 14} textAnchor="middle" fontSize="10" fontFamily="var(--font-mono)" fontWeight="600" fill="var(--text)">{fmtC(pt.value)}</text>
+                      <text x={x} y={padT + plotH + 14} textAnchor="middle" fontSize="9" fill="var(--accent)" fontFamily="var(--font-mono)" fontWeight="600">{isEn() ? `Age ${pt.year}` : `Alder ${pt.year}`}</text>
+                    </g>
+                  );
+                })()}
+                {hoverYear == null && scenarios[0]?.points.filter((_, i) => i % 5 === 0 || i === scenarios[0].points.length - 1).map((p, pi) => {
+                  const idx = scenarios[0].points.indexOf(p);
+                  const x = padL + (idx / Math.max(1, scenarios[0].points.length - 1)) * plotW;
+                  return <text key={pi} x={x} y={chartH - 8} textAnchor="middle" fontSize="9" fill="var(--text-dim)" fontFamily="var(--font-mono)">{isEn() ? `Age ${p.year}` : `${p.year}`}</text>;
+                })}
+              </svg>
+            </div>
+          </div>
+
+          {/* Pension accounts list */}
+          <div className="card" style={{marginTop: 24}}>
+            <div className="card-head">
+              <h3 className="card-title">{isEn() ? 'Your pension accounts' : 'Dine pensionskonti'}</h3>
+              <button className="btn btn-sm" onClick={() => openModal('entry', { type: 'asset', category: 'pension' })}>
+                <Icon name="plus" size={13}/> {isEn() ? 'Add' : 'Tilfoej'}
+              </button>
+            </div>
+            {pensionEntries.length === 0 ? (
+              <div style={{textAlign: "center", padding: "24px 16px", color: "var(--text-dim)", fontSize: 13}}>
+                {isEn() ? 'No pension accounts yet. Add one to track your retirement savings.' : 'Ingen pensionskonti endnu. Tilfoej en for at folge din pensionsopsparing.'}
+              </div>
+            ) : pensionEntries.map((e, i) => (
+              <div key={e.id || i} className="line-row" style={{alignItems: "center"}}>
+                <div className="line-mark"><Icon name="briefcase" /></div>
+                <div style={{flex: 1}}>
+                  <div className="line-name">{e.name || (isEn() ? 'Pension account' : 'Pensionskonto')}</div>
+                  <div className="line-sub">{e.provider || e.category}</div>
+                </div>
+                <div className="line-val" style={{marginRight: 8}}>{fmtC(e.amount)}</div>
+                <div style={{display: "flex", gap: 2}}>
+                  <button className="icon-btn" style={{width: 28, height: 28}} onClick={() => openModal('entry', e)}><Icon name="edit" size={13}/></button>
+                  <button className="icon-btn" style={{width: 28, height: 28}} onClick={() => {
+                    if (confirm(isEn() ? `Delete "${e.name}"?` : `Slet "${e.name}"?`)) {
+                      APP_STATE.entries = APP_STATE.entries.filter(x => x.id !== e.id);
+                      window.saveData();
+                      if (window.syncPortfolioToNetWorth) syncPortfolioToNetWorth();
+                      refresh();
+                    }
+                  }}><Icon name="trash" size={13}/></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {currentPension === 0 && scenarios.length > 0 && (
+        <div className="card" style={{textAlign: "center", padding: "32px 24px", marginTop: 16, background: "var(--bg-sunk)", borderStyle: "dashed"}}>
+          <Icon name="trending" size={36} style={{color: "var(--text-dim)", marginBottom: 10}} />
+          <p style={{color: "var(--text-muted)", fontSize: 13, maxWidth: 360, margin: "0 auto", lineHeight: 1.5}}>
+            {isEn()
+              ? 'Your projections are based on contributions only. Add pension entries to include your current balance.'
+              : 'Dine fremskrivninger er kun baseret paa bidrag. Tilfoej pensionsposter for at inkludere din nuvaerende saldo.'}
+          </p>
         </div>
       )}
-    </div>
+    </>
+  );
+};
+
+// -- Property Tab (from MortgageScreen) --
+const PropertyTab = ({ state, refresh, openModal, household, activeMember, privacyMode }) => {
+  const entries = state.entries || [];
+
+  const assetCategories = {
+    property:    { icon: "home",      en: "Real estate",    da: "Ejendom",     color: "oklch(0.55 0.14 145)" },
+    vehicle:     { icon: "zap",       en: "Vehicles",       da: "Koeretoejer",   color: "oklch(0.55 0.14 265)" },
+    other_asset: { icon: "briefcase", en: "Other assets",   da: "Andre aktiver",color: "oklch(0.60 0.14 45)" },
+  };
+  const loanCategories = {
+    mortgage:       { icon: "home",      en: "Mortgage",       da: "Realkreditlaan",  color: "oklch(0.55 0.15 25)" },
+    car_loan:       { icon: "zap",       en: "Car loan",       da: "Billaan",         color: "oklch(0.55 0.14 350)" },
+    student_loan:   { icon: "edit",      en: "Student loan",   da: "Studielaan",      color: "oklch(0.60 0.12 265)" },
+    credit_card:    { icon: "alert",     en: "Credit card",    da: "Kreditkort",     color: "oklch(0.55 0.16 45)" },
+    other_liability:{ icon: "briefcase", en: "Other loans",    da: "Anden gaeld",     color: "oklch(0.55 0.10 200)" },
+  };
+
+  const bigAssets = entries.filter(e => e.type === 'asset' && assetCategories[e.category]);
+  const allLoans = entries.filter(e => e.type === 'liability');
+
+  const totalBigAssets = bigAssets.reduce((s, e) => s + (e.amount || 0), 0);
+  const totalLoans = allLoans.reduce((s, e) => s + (e.amount || 0), 0);
+  const netPosition = totalBigAssets - totalLoans;
+
+  const propertyValue = entries.filter(e => e.category === 'property').reduce((s, e) => s + (e.amount || 0), 0);
+  const mortgageBalance = entries.filter(e => e.category === 'mortgage').reduce((s, e) => s + (e.amount || 0), 0);
+
+  const defaults = { rate: 3.5, payment: 8000, years: 25 };
+  const [config, setConfig] = useState(() => {
+    try { return { ...defaults, ...(JSON.parse(localStorage.getItem('pi-mortgage-config')) || {}) }; } catch { return defaults; }
+  });
+  const updateConfig = (key, val) => {
+    const next = { ...config, [key]: parseFloat(val) || 0 };
+    setConfig(next);
+    try { localStorage.setItem('pi-mortgage-config', JSON.stringify(next)); } catch {}
+  };
+
+  const hasPartner = (household || []).some(m => m.relation === 'partner');
+  const partner = (household || []).find(m => m.relation === 'partner');
+  const [ownershipSplit, setOwnershipSplit] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pi-property-split')) || { me: 50 }; } catch { return { me: 50 }; }
+  });
+  const myPct = ownershipSplit.me ?? 50;
+  const partnerPct = 100 - myPct;
+  const updateSplit = (meVal) => {
+    const clamped = Math.max(0, Math.min(100, parseInt(meVal) || 0));
+    const next = { me: clamped };
+    setOwnershipSplit(next);
+    try { localStorage.setItem('pi-property-split', JSON.stringify(next)); } catch {}
+  };
+
+  const projection = useMemo(() =>
+    window.computeMortgageProjection
+      ? computeMortgageProjection(propertyValue, mortgageBalance, config.rate, config.payment, config.years)
+      : null,
+    [propertyValue, mortgageBalance, config.rate, config.payment, config.years]
+  );
+
+  const homeEquity = propertyValue - mortgageBalance;
+  const ltv = propertyValue > 0 ? (mortgageBalance / propertyValue * 100) : 0;
+
+  const chartW = 640, chartH = 240, padL = 70, padR = 20, padT = 24, padB = 36;
+  const plotW = chartW - padL - padR, plotH = chartH - padT - padB;
+
+  const inputStyle = {
+    width: "100%", padding: "10px 14px", borderRadius: 10,
+    border: "1px solid var(--border)", background: "var(--bg-sunk)",
+    color: "var(--text)", fontFamily: "var(--font-mono)", fontSize: 16,
+    fontWeight: 500, textAlign: "right", outline: "none", transition: "border-color 0.2s",
+  };
+  const labelStyle = { fontSize: 12, color: "var(--text-dim)", marginBottom: 6, display: "block", fontWeight: 500 };
+
+  return (
+    <>
+      {/* KPI row */}
+      <div className="grid grid-12" style={{marginBottom: 24}}>
+        <div className="card col-3 stat">
+          <div className="eyebrow">{isEn() ? 'Total assets' : 'Aktiver i alt'}</div>
+          <div className={`value${privacyMode ? ' sensitive' : ''}`} style={{fontSize: 28}}>{fmtC(totalBigAssets)}</div>
+          <div style={{fontSize: 11, color: "var(--text-dim)", marginTop: 4}}>{bigAssets.length} {isEn() ? 'items' : 'poster'}</div>
+        </div>
+        <div className="card col-3 stat">
+          <div className="eyebrow">{isEn() ? 'Total loans' : 'Laan i alt'}</div>
+          <div className={`value${privacyMode ? ' sensitive' : ''}`} style={{fontSize: 28, color: "var(--neg)"}}>{fmtC(totalLoans)}</div>
+          <div style={{fontSize: 11, color: "var(--text-dim)", marginTop: 4}}>{allLoans.length} {isEn() ? 'loans' : 'laan'}</div>
+        </div>
+        <div className="card col-3 stat">
+          <div className="eyebrow">{isEn() ? 'Net position' : 'Netto'}</div>
+          <div className={`value${privacyMode ? ' sensitive' : ''}`} style={{fontSize: 28, color: netPosition >= 0 ? "var(--pos)" : "var(--neg)"}}>{fmtC(netPosition)}</div>
+        </div>
+        {propertyValue > 0 && (
+          <div className="card col-3 stat">
+            <div className="eyebrow">LTV</div>
+            <div className="value" style={{fontSize: 28, color: ltv > 80 ? "var(--neg)" : ltv > 60 ? "var(--accent)" : "var(--pos)"}}>{ltv.toFixed(1)}%</div>
+            <div style={{fontSize: 11, color: "var(--text-dim)", marginTop: 4}}>
+              <span className={privacyMode ? 'sensitive' : ''}>{fmtC(homeEquity)}</span> {isEn() ? 'equity' : 'frivaerdi'}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Property ownership split */}
+      {hasPartner && propertyValue > 0 && (
+        <div className="card" style={{marginBottom: 24}}>
+          <div className="card-head">
+            <h3 className="card-title"><Icon name="users" size={15} style={{marginRight: 6, opacity: 0.5}}/>{isEn() ? 'Property ownership' : 'Ejendomsejerskab'}</h3>
+          </div>
+          <div style={{display:"grid", gridTemplateColumns:"1fr auto 1fr", gap: 20, alignItems: "center"}}>
+            <div style={{textAlign: "center"}}>
+              <div style={{fontSize: 12, color: "var(--text-dim)", marginBottom: 6, fontWeight: 500}}>
+                <Icon name="user" size={12} style={{marginRight: 4, opacity: 0.5}}/>{isEn() ? 'Me' : 'Mig'}
+              </div>
+              <div style={{fontFamily: "var(--font-display)", fontSize: 28, fontWeight: 600}}>{myPct}%</div>
+              <div className={privacyMode ? 'sensitive' : ''} style={{fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--pos)", marginTop: 4}}>
+                {fmtC(homeEquity * myPct / 100)}
+              </div>
+            </div>
+            <div style={{width: 200, textAlign: "center"}}>
+              <input type="range" min="0" max="100" step="5" value={myPct}
+                onChange={e => updateSplit(e.target.value)}
+                style={{width: "100%", accentColor: "var(--accent)"}} />
+              <div style={{display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-dim)", marginTop: 2}}>
+                <span>0%</span><span>50/50</span><span>100%</span>
+              </div>
+            </div>
+            <div style={{textAlign: "center"}}>
+              <div style={{fontSize: 12, color: "var(--text-dim)", marginBottom: 6, fontWeight: 500}}>
+                <Icon name="user" size={12} style={{marginRight: 4, opacity: 0.5}}/>{partner?.name || 'Partner'}
+              </div>
+              <div style={{fontFamily: "var(--font-display)", fontSize: 28, fontWeight: 600}}>{partnerPct}%</div>
+              <div className={privacyMode ? 'sensitive' : ''} style={{fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--pos)", marginTop: 4}}>
+                {fmtC(homeEquity * partnerPct / 100)}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mortgage amortization */}
+      {propertyValue > 0 && mortgageBalance > 0 && (
+        <div className="card" style={{marginBottom: 24}}>
+          <div className="card-head">
+            <h3 className="card-title"><Icon name="home" size={15} style={{marginRight: 6, opacity: 0.5}}/>{isEn() ? 'Mortgage amortization' : 'Realkreditlaan afdrag'}</h3>
+          </div>
+          <div style={{display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginBottom: 16}}>
+            <div>
+              <label style={labelStyle}>{isEn() ? 'Interest rate %' : 'Rente %'}</label>
+              <input type="number" step="0.1" value={config.rate}
+                onChange={e => updateConfig('rate', e.target.value)}
+                onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                onBlur={e => e.target.style.borderColor = 'var(--border)'}
+                style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>{isEn() ? 'Monthly payment' : 'Maanedlig ydelse'}</label>
+              <input type="number" step="500" value={config.payment}
+                onChange={e => updateConfig('payment', e.target.value)}
+                onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                onBlur={e => e.target.style.borderColor = 'var(--border)'}
+                style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>{isEn() ? 'Remaining years' : 'Resterende aar'}: <strong style={{color: "var(--text)"}}>{config.years}</strong></label>
+              <input type="range" min="1" max="30" value={config.years}
+                onChange={e => updateConfig('years', e.target.value)}
+                style={{width: "100%", marginTop: 12, accentColor: "var(--accent)"}} />
+            </div>
+          </div>
+          {projection && (
+            <div style={{display: "flex", gap: 24, padding: "12px 0", borderTop: "1px solid var(--border)", fontSize: 13}}>
+              <span style={{color: "var(--text-muted)"}}>{isEn() ? 'Monthly payment' : 'Ydelse'}: <strong style={{color: "var(--text)"}}>{fmtC(projection.monthlyPayment)}</strong></span>
+              <span style={{color: "var(--text-muted)"}}>{isEn() ? 'Total interest' : 'Samlet rente'}: <strong style={{color: "var(--neg)"}}>{fmtC(projection.totalInterest)}</strong></span>
+              <span style={{color: "var(--text-muted)", marginLeft: "auto"}}>{isEn() ? 'Debt free in' : 'Gaeldfri om'} <strong style={{color: "var(--pos)"}}>{config.years} {isEn() ? 'years' : 'aar'}</strong></span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Equity growth chart */}
+      {projection && projection.points && projection.points.length > 1 && (
+        <div className="card">
+          <div className="card-head">
+            <h3 className="card-title">{isEn() ? 'Equity growth over time' : 'Frivaerdivaekst over tid'}</h3>
+          </div>
+          <svg viewBox={`0 0 ${chartW} ${chartH}`} style={{width: "100%", height: 280}}>
+            {[0, 0.25, 0.5, 0.75, 1].map(frac => {
+              const val = propertyValue * frac;
+              const y = padT + plotH - (frac * plotH);
+              return (
+                <g key={frac}>
+                  <line x1={padL} x2={chartW - padR} y1={y} y2={y} stroke="var(--border)" strokeWidth="0.5" strokeDasharray="4,3" />
+                  <text x={padL - 8} y={y + 4} textAnchor="end" fontSize="9" fill="var(--text-dim)" fontFamily="var(--font-mono)">{fmtC(val)}</text>
+                </g>
+              );
+            })}
+            {(() => {
+              const pts = projection.points.map((p, i) => {
+                const x = padL + (i / Math.max(1, projection.points.length - 1)) * plotW;
+                const yDebt = padT + plotH - (propertyValue > 0 ? (p.debt / propertyValue) * plotH : 0);
+                return `${x},${yDebt}`;
+              }).join(' ');
+              const baseline = padT + plotH;
+              const firstX = padL, lastX = padL + plotW;
+              return <polygon points={`${firstX},${baseline} ${pts} ${lastX},${baseline}`} fill="oklch(0.55 0.15 25 / 0.15)" />;
+            })()}
+            {(() => {
+              const pts = projection.points.map((p, i) => {
+                const x = padL + (i / Math.max(1, projection.points.length - 1)) * plotW;
+                const yTop = padT;
+                const yDebt = padT + plotH - (propertyValue > 0 ? (p.debt / propertyValue) * plotH : 0);
+                return { x, yTop, yDebt };
+              });
+              const topPts = pts.map(p => `${p.x},${p.yTop}`).join(' ');
+              const bottomPts = pts.map(p => `${p.x},${p.yDebt}`).reverse().join(' ');
+              return <polygon points={`${topPts} ${bottomPts}`} fill="oklch(0.45 0.12 145 / 0.12)" />;
+            })()}
+            <polyline points={projection.points.map((p, i) => {
+              const x = padL + (i / Math.max(1, projection.points.length - 1)) * plotW;
+              const y = padT + plotH - (propertyValue > 0 ? (p.debt / propertyValue) * plotH : 0);
+              return `${x},${y}`;
+            }).join(' ')} fill="none" stroke="oklch(0.55 0.15 25)" strokeWidth="2" />
+            {projection.points.filter((_, i) => i % 5 === 0 || i === projection.points.length - 1).map((p, pi) => {
+              const idx = projection.points.indexOf(p);
+              const x = padL + (idx / Math.max(1, projection.points.length - 1)) * plotW;
+              return <text key={pi} x={x} y={chartH - 8} textAnchor="middle" fontSize="9" fill="var(--text-dim)" fontFamily="var(--font-mono)">{isEn() ? `Yr ${p.year}` : `Aar ${p.year}`}</text>;
+            })}
+          </svg>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {totalBigAssets === 0 && totalLoans === 0 && (
+        <div className="card" style={{textAlign: "center", padding: 40, background: "var(--bg-sunk)", borderStyle: "dashed"}}>
+          <Icon name="home" size={36} style={{color: "var(--text-dim)", marginBottom: 10}} />
+          <p style={{color: "var(--text-muted)", fontSize: 13, maxWidth: 400, margin: "0 auto", lineHeight: 1.5}}>
+            {isEn()
+              ? 'Add property, vehicles, and loans to see your full asset and liability picture here.'
+              : 'Tilfoej ejendom, koeretoejer og laan for at se dit samlede aktiv- og gaeldsbillede her.'}
+          </p>
+        </div>
+      )}
+    </>
   );
 };
 
 // ==========================================================================
-// HUGINN — Portfolio Chatbot
+// HUGINN -- Portfolio Chatbot
 // ==========================================================================
-const HuginnScreen = ({ state, refresh, privacyMode }) => {
+const HuginnScreen = ({ state, refresh, privacyMode, initialMessage }) => {
   // Persist chat in APP_STATE so it survives screen navigation
   if (!APP_STATE._huginnMessages) APP_STATE._huginnMessages = [];
   if (APP_STATE._huginnSessionStarted === undefined) APP_STATE._huginnSessionStarted = false;
@@ -2150,7 +2095,7 @@ const HuginnScreen = ({ state, refresh, privacyMode }) => {
       .map(([t, v]) => `  ${t}: TOTAL ${Math.round(v.totalValue).toLocaleString()} DKK (${totalPortfolio > 0 ? (v.totalValue/totalPortfolio*100).toFixed(1) : 0}%) across ${v.accounts.length} accounts:\n    ${v.accounts.join('\n    ')}`)
       .join('\n');
 
-    // Overlap data: underlying holdings in ETFs/funds, sector & geo breakdown
+    // Overlap data
     const overlapData = state.overlapData;
     let overlapSection = '';
     if (overlapData?.aggregated) {
@@ -2175,7 +2120,7 @@ const HuginnScreen = ({ state, refresh, privacyMode }) => {
       }
     }
 
-    // Pension data — per-member
+    // Pension data
     const buildPensionBlock = (label, configKeyName, memberEntries) => {
       const cfg = (() => {
         try { return JSON.parse(localStorage.getItem(configKeyName)) || {}; } catch { return {}; }
@@ -2214,7 +2159,7 @@ const HuginnScreen = ({ state, refresh, privacyMode }) => {
       pensionSection += mp.block;
     });
 
-    // Individual net worth entries (assets & liabilities detail)
+    // Net worth detail
     const assetEntries = entries.filter(e => e.type === 'asset');
     const liabilityEntries = entries.filter(e => e.type === 'liability');
     let networthDetail = '\nNET WORTH DETAIL:';
@@ -2254,8 +2199,7 @@ const HuginnScreen = ({ state, refresh, privacyMode }) => {
   Primary user (me)
 ${hhMembers.map(m => `  ${m.name} (${m.relation}${m.dob ? ', born ' + m.dob : ''})`).join('\n')}
   Note: Each entry and position has an "owner" field. When analyzing, consider household totals AND per-member breakdowns.\n`;
-      // Per-member summaries
-      const allMembers = [{id:'me', name: isEn()?'Primary user':'Primær bruger'}, ...hhMembers];
+      const allMembers = [{id:'me', name: isEn()?'Primary user':'Primaer bruger'}, ...hhMembers];
       allMembers.forEach(member => {
         const mPositions = positions.filter(p => member.id === 'me' ? (!p.owner || p.owner === 'me') : p.owner === member.id);
         const mEntries = entries.filter(e => member.id === 'me' ? (!e.owner || e.owner === 'me') : e.owner === member.id);
@@ -2297,6 +2241,16 @@ IMPORTANT: When the user asks about their exposure to a specific stock (e.g. Goo
       sendToHuginn(initMsg);
     }
   }, []);
+
+  // Handle initial message from quick ask bar
+  useEffect(() => {
+    if (initialMessage && initialMessage.trim()) {
+      const userMsg = { role: 'user', content: initialMessage.trim() };
+      const newMessages = [...messages, userMsg];
+      setMessages(newMessages);
+      sendToHuginn(newMessages);
+    }
+  }, [initialMessage]);
 
   const fetchMarketContext = async () => {
     try {
@@ -2409,7 +2363,7 @@ IMPORTANT: When the user asks about their exposure to a specific stock (e.g. Goo
             <RavenIcon size={32} style={{color: "var(--accent)", opacity: 0.8}}/>
             <span><em>Huginn</em></span>
           </h1>
-          <p className="page-subtitle">{isEn() ? "Odin's raven sees your portfolio" : "Odins ravn ser din portefølje"}</p>
+          <p className="page-subtitle">{isEn() ? "Odin's raven sees your portfolio" : "Odins ravn ser din portefolje"}</p>
         </div>
         <div className="page-actions">
           <button className="btn" onClick={clearChat} style={{fontSize: 12}}>
@@ -2434,7 +2388,7 @@ IMPORTANT: When the user asks about their exposure to a specific stock (e.g. Goo
             <div style={{fontSize: 14, maxWidth: 400, lineHeight: 1.6}}>
               {isEn()
                 ? 'Huginn flies out each day, observes your portfolio through the eyes of legendary investors, and returns with what it saw.'
-                : 'Huginn flyver ud hver dag, observerer din portefølje gennem legendariske investorers øjne og vender tilbage med hvad den så.'}
+                : 'Huginn flyver ud hver dag, observerer din portefolje gennem legendariske investorers ojne og vender tilbage med hvad den saa.'}
             </div>
           </div>
         )}
@@ -2508,7 +2462,7 @@ IMPORTANT: When the user asks about their exposure to a specific stock (e.g. Goo
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={isEn() ? "Ask Huginn about your portfolio…" : "Spørg Huginn om din portefølje…"}
+            placeholder={isEn() ? "Ask Huginn about your portfolio..." : "Spoerg Huginn om din portefolje..."}
             rows={1}
             style={{
               flex: 1, border: "none", outline: "none", resize: "none",
@@ -2541,7 +2495,7 @@ IMPORTANT: When the user asks about their exposure to a specific stock (e.g. Goo
           </button>
         </div>
         <div style={{textAlign: "center", padding: "8px 0 2px", fontSize: 10, color: "var(--text-dim)", opacity: 0.5}}>
-          {isEn() ? 'Framework commentary, not financial advice. Huginn sees through legendary lenses.' : 'Ramme-kommentar, ikke finansiel rådgivning. Huginn ser gennem legendariske linser.'}
+          {isEn() ? 'Framework commentary, not financial advice. Huginn sees through legendary lenses.' : 'Ramme-kommentar, ikke finansiel raadgivning. Huginn ser gennem legendariske linser.'}
         </div>
       </div>
 
@@ -2626,7 +2580,7 @@ const SettingsScreen = ({ state, refresh, theme, setTheme, lang, setLang, househ
           <select className="form-group" style={{width:"100%", padding:"10px 14px", border:"1px solid var(--border)", borderRadius:"var(--r-md)", background:"var(--bg-panel)", color:"var(--text)", fontSize:14}}
             value={state.currency} onChange={e=>{APP_STATE.currency=e.target.value; window.savePreferences(); refresh();}}>
             <option value="DKK">DKK (kr.)</option>
-            <option value="EUR">EUR (€)</option>
+            <option value="EUR">EUR</option>
             <option value="USD">USD ($)</option>
             <option value="SEK">SEK (kr)</option>
             <option value="NOK">NOK (kr)</option>
@@ -2649,13 +2603,13 @@ const SettingsScreen = ({ state, refresh, theme, setTheme, lang, setLang, househ
         </h3>
         <p style={{color:"var(--text-muted)", fontSize:13, marginBottom:14}}>
           {isEn() ? 'Add your partner and up to 2 children. Each member gets their own portfolio, net worth, and pension data — and you can view everything combined as a household.'
-                   : 'Tilføj din partner og op til 2 børn. Hvert medlem får sin egen portefølje, formue og pension — og du kan se det hele samlet som husstand.'}
+                   : 'Tilfoej din partner og op til 2 boern. Hvert medlem faar sin egen portefolje, formue og pension — og du kan se det hele samlet som husstand.'}
         </p>
 
         {/* Primary user (always shown) */}
         <div style={{display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:"1px solid var(--border)"}}>
           <Icon name="user" size={16}/>
-          <span style={{flex:1, fontWeight:500}}>{isEn() ? 'Me (primary)' : 'Mig (primær)'}</span>
+          <span style={{flex:1, fontWeight:500}}>{isEn() ? 'Me (primary)' : 'Mig (primaer)'}</span>
           <span className="badge" style={{fontSize:11}}>owner</span>
         </div>
 
@@ -2692,18 +2646,18 @@ const SettingsScreen = ({ state, refresh, theme, setTheme, lang, setLang, househ
                 setHousehold([...household, { id: crypto.randomUUID(), name: name.trim(), relation: 'partner' }]);
               }
             }}>
-              <Icon name="plus" size={13}/> {isEn() ? 'Add partner' : 'Tilføj partner'}
+              <Icon name="plus" size={13}/> {isEn() ? 'Add partner' : 'Tilfoej partner'}
             </button>
           )}
           {household.filter(m => m.relation === 'child').length < 2 && (
             <button className="btn" onClick={() => {
               const name = prompt(isEn() ? 'Child name:' : 'Barnets navn:');
               if (name && name.trim()) {
-                const dob = prompt(isEn() ? 'Date of birth (optional, YYYY-MM-DD):' : 'Fødselsdato (valgfri, ÅÅÅÅ-MM-DD):');
+                const dob = prompt(isEn() ? 'Date of birth (optional, YYYY-MM-DD):' : 'Foedselsdato (valgfri, YYYY-MM-DD):');
                 setHousehold([...household, { id: crypto.randomUUID(), name: name.trim(), relation: 'child', dob: dob || '' }]);
               }
             }}>
-              <Icon name="plus" size={13}/> {isEn() ? 'Add child' : 'Tilføj barn'}
+              <Icon name="plus" size={13}/> {isEn() ? 'Add child' : 'Tilfoej barn'}
             </button>
           )}
         </div>
@@ -2711,7 +2665,7 @@ const SettingsScreen = ({ state, refresh, theme, setTheme, lang, setLang, househ
 
       <div className="card" style={{marginTop:20, borderColor:"oklch(0.55 0.15 25 / 0.3)"}}>
         <h3 className="card-title" style={{color:"var(--neg)"}}>{isEn() ? 'Danger zone' : 'Farezone'}</h3>
-        <p style={{color:"var(--text-muted)", fontSize:13, margin:"8px 0 14px"}}>{isEn() ? 'This will permanently delete all your data — entries, positions, preferences, and projections.' : 'Dette sletter permanent alle dine data — poster, positioner, præferencer og fremskrivninger.'}</p>
+        <p style={{color:"var(--text-muted)", fontSize:13, margin:"8px 0 14px"}}>{isEn() ? 'This will permanently delete all your data -- entries, positions, preferences, and projections.' : 'Dette sletter permanent alle dine data -- poster, positioner, praeferencer og fremskrivninger.'}</p>
         <button className="btn" style={{background:"oklch(0.55 0.15 25 / 0.12)", color:"var(--neg)", borderColor:"oklch(0.55 0.15 25 / 0.3)"}}
           onClick={() => {
             if (confirm(isEn() ? 'Are you sure? This cannot be undone.' : 'Er du sikker? Dette kan ikke fortrydes.')) {
@@ -2791,7 +2745,7 @@ const EntryModal = ({ open, onClose, editData, refresh, household, activeMember 
         <button className="modal-close" onClick={()=>{ref.current?.close(); onClose();}}>&times;</button>
       </div>
       <form className="modal-body" onSubmit={handleSubmit}>
-        <div className="form-group"><label>{tl("modal.entryName")}</label><input value={name} onChange={e=>setName(e.target.value)} required placeholder={isEn()?"e.g. Budget account, Savings…":"f.eks. Budgetkonto, Opsparing…"}/></div>
+        <div className="form-group"><label>{tl("modal.entryName")}</label><input value={name} onChange={e=>setName(e.target.value)} required placeholder={isEn()?"e.g. Budget account, Savings...":"f.eks. Budgetkonto, Opsparing..."}/></div>
         <div className="form-group"><label>{tl("modal.entryAmount")}</label><input type="number" value={amount} onChange={e=>setAmount(e.target.value)} required min="0" step="any"/></div>
         <div className="form-group"><label>{tl("modal.entryType")}</label>
           <select value={type} onChange={e=>setType(e.target.value)}><option value="asset">{tl("modal.asset")}</option><option value="liability">{tl("modal.liability")}</option></select>
@@ -2804,14 +2758,14 @@ const EntryModal = ({ open, onClose, editData, refresh, household, activeMember 
               <option value="investment">{isEn()?'Investment':'Investering'}</option>
               <option value="property">{isEn()?'Real estate':'Ejendom'}</option>
               <option value="pension">{isEn()?'Pension':'Pension'}</option>
-              <option value="vehicle">{isEn()?'Vehicle':'Køretøj'}</option>
+              <option value="vehicle">{isEn()?'Vehicle':'Koretoj'}</option>
               <option value="other_asset">{isEn()?'Other asset':'Andet aktiv'}</option>
             </>) : (<>
-              <option value="mortgage">{isEn()?'Mortgage':'Realkreditlån'}</option>
-              <option value="student_loan">{isEn()?'Student loan':'Studielån'}</option>
-              <option value="car_loan">{isEn()?'Car loan':'Billån'}</option>
+              <option value="mortgage">{isEn()?'Mortgage':'Realkreditlaan'}</option>
+              <option value="student_loan">{isEn()?'Student loan':'Studielaan'}</option>
+              <option value="car_loan">{isEn()?'Car loan':'Billaan'}</option>
               <option value="credit_card">{isEn()?'Credit card':'Kreditkort'}</option>
-              <option value="other_liability">{isEn()?'Other loan':'Anden gæld'}</option>
+              <option value="other_liability">{isEn()?'Other loan':'Anden gaeld'}</option>
             </>)}
           </select>
         </div>
@@ -2823,7 +2777,7 @@ const EntryModal = ({ open, onClose, editData, refresh, household, activeMember 
         )}
         <div className="form-group">
           <label>{isEn()?'Notes (optional)':'Noter (valgfri)'}</label>
-          <input value={notes} onChange={e=>setNotes(e.target.value)} placeholder={isEn()?"e.g. Lunar, Nordea…":"f.eks. Lunar, Nordea…"}/>
+          <input value={notes} onChange={e=>setNotes(e.target.value)} placeholder={isEn()?"e.g. Lunar, Nordea...":"f.eks. Lunar, Nordea..."}/>
         </div>
         {household && household.length > 0 && (
           <div className="form-group">
@@ -2912,11 +2866,11 @@ const PositionModal = ({ open, onClose, editData, refresh, household, activeMemb
         <div className="form-group"><label>{tl("modal.shares")}</label><input type="number" value={shares} onChange={e=>setShares(e.target.value)} required min="0" step="any"/></div>
         <div className="form-group"><label>{isEn()?'Currency':'Valuta'}</label>
           <select value={currency} onChange={e=>setCurrency(e.target.value)}>
-            <option value="DKK">DKK (kr.)</option><option value="USD">USD ($)</option><option value="EUR">EUR (€)</option><option value="SEK">SEK</option><option value="NOK">NOK</option><option value="GBP">GBP (£)</option>
+            <option value="DKK">DKK (kr.)</option><option value="USD">USD ($)</option><option value="EUR">EUR</option><option value="SEK">SEK</option><option value="NOK">NOK</option><option value="GBP">GBP</option>
           </select>
         </div>
         <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
-          <div className="form-group"><label>{isEn()?`Avg. buy price (${currency})`:`Gns. købspris (${currency})`}</label><input type="number" value={avgPrice} onChange={e=>setAvgPrice(e.target.value)} min="0" step="any"/></div>
+          <div className="form-group"><label>{isEn()?`Avg. buy price (${currency})`:`Gns. kobspris (${currency})`}</label><input type="number" value={avgPrice} onChange={e=>setAvgPrice(e.target.value)} min="0" step="any"/></div>
           <div className="form-group"><label>{isEn()?`Current price (${currency})`:`Aktuel kurs (${currency})`}</label><input type="number" value={currentPrice} onChange={e=>setCurrentPrice(e.target.value)} min="0" step="any"/></div>
         </div>
         {household && household.length > 0 && (
@@ -2994,17 +2948,17 @@ const ImportModal = ({ open, onClose, refresh, activeMember }) => {
 
   // Process pasted/dropped images through AI scan
   const processImages = async (imageFiles) => {
-    setStatus(isEn() ? `Preparing ${imageFiles.length} image${imageFiles.length > 1 ? 's' : ''} for AI scan…` : `Forbereder ${imageFiles.length} billede${imageFiles.length > 1 ? 'r' : ''} til AI-scanning…`);
+    setStatus(isEn() ? `Preparing ${imageFiles.length} image${imageFiles.length > 1 ? 's' : ''} for AI scan...` : `Forbereder ${imageFiles.length} billede${imageFiles.length > 1 ? 'r' : ''} til AI-scanning...`);
     try {
       const allBlocks = [];
       for (const file of imageFiles) {
         const blocks = await window.prepareFileForScan(file);
         allBlocks.push(...blocks);
       }
-      setStatus(isEn() ? 'Analyzing with AI…' : 'Analyserer med AI…');
+      setStatus(isEn() ? 'Analyzing with AI...' : 'Analyserer med AI...');
       return allBlocks;
     } catch (err) {
-      setStatus("❌ " + err.message);
+      setStatus("! " + err.message);
       return null;
     }
   };
@@ -3037,7 +2991,7 @@ const ImportModal = ({ open, onClose, refresh, activeMember }) => {
     if (!file) return;
 
     if (file.name.endsWith('.json')) {
-      setStatus(isEn()?'Reading JSON…':'Læser JSON…');
+      setStatus(isEn()?'Reading JSON...':'Laeser JSON...');
       const reader = new FileReader();
       reader.onload = () => {
         try {
@@ -3059,27 +3013,27 @@ const ImportModal = ({ open, onClose, refresh, activeMember }) => {
           window.saveData();
           if (window.syncPortfolioToNetWorth) syncPortfolioToNetWorth();
           refresh();
-          setStatus(`✓ ${imported} ${isEn()?'positions imported':'positioner importeret'}`);
+          setStatus(`Done: ${imported} ${isEn()?'positions imported':'positioner importeret'}`);
           setTimeout(() => { ref.current?.close(); onClose(); setStatus(""); }, 1500);
-        } catch(err) { setStatus("❌ " + err.message); }
+        } catch(err) { setStatus("! " + err.message); }
       };
       reader.readAsText(file);
     } else {
       // AI scan for PDF/images
-      setStatus(isEn()?'Preparing for AI scan…':'Forbereder AI-scanning…');
+      setStatus(isEn()?'Preparing for AI scan...':'Forbereder AI-scanning...');
       try {
         const imageBlocks = await window.prepareFileForScan(file);
         await scanWithAI(imageBlocks);
       } catch(err) {
         console.error('Import error:', err);
-        setStatus("❌ " + err.message);
+        setStatus("! " + err.message);
       }
     }
   };
 
   const scanWithAI = async (imageBlocks) => {
     try {
-      setStatus(isEn()?'Analyzing with AI…':'Analyserer med AI…');
+      setStatus(isEn()?'Analyzing with AI...':'Analyserer med AI...');
       const resp = await fetch('/api/scan', {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({
@@ -3130,13 +3084,13 @@ Return ONLY valid JSON (no markdown, no code fences, no explanation). Use this e
         if (!resp.ok) {
           const errText = await resp.text();
           console.error('Scan API error:', resp.status, errText);
-          setStatus(`❌ API error ${resp.status}: ${errText.slice(0,100)}`);
+          setStatus(`! API error ${resp.status}: ${errText.slice(0,100)}`);
           return;
         }
         const data = await resp.json();
         console.log('AI scan response:', JSON.stringify(data).slice(0,500));
         if (data.error) {
-          setStatus(`❌ ${data.error}`);
+          setStatus(`! ${data.error}`);
           return;
         }
         if (data.content?.[0]?.text) {
@@ -3184,17 +3138,17 @@ Return ONLY valid JSON (no markdown, no code fences, no explanation). Use this e
             window.saveData();
             if (window.syncPortfolioToNetWorth) syncPortfolioToNetWorth();
             refresh();
-            setStatus(`✓ ${imported} ${isEn()?'positions imported. Fetching live prices…':'positioner importeret. Henter live kurser…'}`);
+            setStatus(`Done: ${imported} ${isEn()?'positions imported. Fetching live prices...':'positioner importeret. Henter live kurser...'}`);
             // Auto-fetch live prices after import
             try {
               const priceResult = await fetchLivePrices();
               if (window.syncPortfolioToNetWorth) syncPortfolioToNetWorth();
               refresh();
               const failMsg = priceResult.failed?.length ? ` (${priceResult.failed.join(', ')} ${isEn()?'not found':'ikke fundet'})` : '';
-              setStatus(`✓ ${imported} ${isEn()?'positions imported':'positioner importeret'}, ${priceResult.updated||0} ${isEn()?'prices updated':'kurser opdateret'}${failMsg}`);
+              setStatus(`Done: ${imported} ${isEn()?'positions imported':'positioner importeret'}, ${priceResult.updated||0} ${isEn()?'prices updated':'kurser opdateret'}${failMsg}`);
             } catch(e) {
               console.error('Auto price fetch failed:', e);
-              setStatus(`✓ ${imported} ${isEn()?'positions imported (price fetch failed)':'positioner importeret (kurshentning fejlede)'}`);
+              setStatus(`Done: ${imported} ${isEn()?'positions imported (price fetch failed)':'positioner importeret (kurshentning fejlede)'}`);
             }
             setTimeout(() => { ref.current?.close(); onClose(); setStatus(""); }, 3000);
           } else {
@@ -3207,7 +3161,7 @@ Return ONLY valid JSON (no markdown, no code fences, no explanation). Use this e
         }
     } catch(err) {
       console.error('Import error:', err);
-      setStatus("❌ " + err.message);
+      setStatus("! " + err.message);
     }
   };
 
@@ -3243,7 +3197,7 @@ Return ONLY valid JSON (no markdown, no code fences, no explanation). Use this e
 
         {/* Paste / Drop zone for screenshots */}
         <div className="form-group">
-          <label>{isEn() ? 'Or paste / drop screenshots' : 'Eller indsæt / træk skærmbilleder'}</label>
+          <label>{isEn() ? 'Or paste / drop screenshots' : 'Eller indsaet / traek skaermbilleder'}</label>
           <div
             ref={pasteZoneRef}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -3265,9 +3219,9 @@ Return ONLY valid JSON (no markdown, no code fences, no explanation). Use this e
           >
             {pastedImages.length === 0 ? (
               <div style={{color: 'var(--text-dim)', fontSize: 13}}>
-                <div style={{fontSize: 28, marginBottom: 6, opacity: 0.5}}>📋</div>
-                <div>{isEn() ? 'Press Ctrl+V / ⌘V to paste a screenshot' : 'Tryk Ctrl+V / ⌘V for at indsætte et skærmbillede'}</div>
-                <div style={{fontSize: 11, marginTop: 4, opacity: 0.7}}>{isEn() ? 'or drag & drop images here' : 'eller træk og slip billeder her'}</div>
+                <div style={{fontSize: 28, marginBottom: 6, opacity: 0.5}}>&#128203;</div>
+                <div>{isEn() ? 'Press Ctrl+V / Cmd+V to paste a screenshot' : 'Tryk Ctrl+V / Cmd+V for at indsaette et skaermbillede'}</div>
+                <div style={{fontSize: 11, marginTop: 4, opacity: 0.7}}>{isEn() ? 'or drag & drop images here' : 'eller traek og slip billeder her'}</div>
               </div>
             ) : (
               <div style={{display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center'}}>
@@ -3294,7 +3248,7 @@ Return ONLY valid JSON (no markdown, no code fences, no explanation). Use this e
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         lineHeight: 1, padding: 0,
                       }}
-                    >×</button>
+                    >&times;</button>
                   </div>
                 ))}
                 <div
@@ -3304,7 +3258,7 @@ Return ONLY valid JSON (no markdown, no code fences, no explanation). Use this e
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     fontSize: 24, color: 'var(--text-muted)', cursor: 'pointer',
                   }}
-                  title={isEn() ? 'Paste or drop more' : 'Indsæt eller træk flere'}
+                  title={isEn() ? 'Paste or drop more' : 'Indsaet eller traek flere'}
                 >+</div>
               </div>
             )}
@@ -3354,14 +3308,19 @@ function App() {
 
   // Household state
   const [household, setHouseholdState] = useState(() => loadHousehold());
-  const [activeMember, setActiveMember] = useState("me"); // "me" | member.id | "household"
+  const [activeMember, setActiveMember] = useState("me");
   const setHousehold = (members) => { setHouseholdState(members); saveHousehold(members); };
 
   // Modal state
-  const [modal, setModal] = useState(null); // { type: 'entry'|'position'|'import', data?: any }
-
+  const [modal, setModal] = useState(null);
   const openModal = (type, data) => setModal({ type, data });
   const closeModal = () => setModal(null);
+
+  // Accounts tab persistence
+  const [accountsTab, setAccountsTab] = useState("investments");
+
+  // Huginn initial message from quick ask
+  const [huginnInitialMsg, setHuginnInitialMsg] = useState("");
 
   // Theme
   const setTheme = (t) => {
@@ -3388,7 +3347,6 @@ function App() {
 
   // Init
   useEffect(() => {
-    // Load preferences
     try {
       const saved = JSON.parse(localStorage.getItem('pi-prefs'));
       if (saved) {
@@ -3404,7 +3362,7 @@ function App() {
   // Auto-refresh prices every 5 minutes
   useEffect(() => {
     if (!authed) return;
-    const AUTO_REFRESH_MS = 5 * 60 * 1000; // 5 minutes
+    const AUTO_REFRESH_MS = 5 * 60 * 1000;
 
     const doAutoRefresh = async () => {
       if (!window.fetchLivePrices) return;
@@ -3417,13 +3375,11 @@ function App() {
       } catch {}
     };
 
-    // Refresh on load if prices are stale (> 5 min old)
     const lastUpdate = APP_STATE.lastPriceUpdate;
     if (!lastUpdate || (Date.now() - new Date(lastUpdate).getTime()) > AUTO_REFRESH_MS) {
-      setTimeout(doAutoRefresh, 2000); // slight delay to let UI settle
+      setTimeout(doAutoRefresh, 2000);
     }
 
-    // Then refresh every 5 minutes
     const interval = setInterval(doAutoRefresh, AUTO_REFRESH_MS);
     return () => clearInterval(interval);
   }, [authed, refresh]);
@@ -3464,27 +3420,40 @@ function App() {
 
   const currentNav = NAV.find(n => n.id === route) || NAV[0];
   const positions = filteredState.positions || [];
-  const scoreData = window.computePortfolioScore ? computePortfolioScore() : null;
-  const suggestions = window.computeRebalanceSuggestions ? computeRebalanceSuggestions() : [];
 
   const navBadges = {
-    portfolio: positions.length > 0 ? String(positions.length) : null,
-    score: scoreData ? String(scoreData.total) : null,
-    rebalance: suggestions.length > 0 ? String(suggestions.length) : null,
+    accounts: positions.length > 0 ? String(positions.length) : null,
   };
 
-  const Screen = {
-    overview: Overview,
-    networth: NetWorthScreen,
-    pension: PensionScreen,
-    mortgage: MortgageScreen,
-    portfolio: PortfolioScreen,
-    overlap: OverlapScreen,
-    score: ScoreScreen,
-    rebalance: RebalanceScreen,
-    huginn: HuginnScreen,
-    settings: SettingsScreen,
-  }[route] || Overview;
+  // Navigation helper for Overview
+  const navigateTo = (target, tab) => {
+    if (target === 'import') {
+      openModal('import');
+    } else if (target === 'add-position') {
+      openModal('position');
+    } else if (target === 'accounts') {
+      if (tab) setAccountsTab(tab);
+      setRoute('accounts');
+    } else if (target === 'huginn') {
+      setRoute('huginn');
+    } else {
+      setRoute(target);
+    }
+  };
+
+  // Quick ask handler: navigate to Huginn and pass message
+  const sendQuickAsk = (text) => {
+    setHuginnInitialMsg(text);
+    setRoute('huginn');
+  };
+
+  // RavenIcon for nav
+  const RavenIcon = ({ size = 15, style = {} }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={style}>
+      <path d="M4 19c0-3 2-6 6-8l2-1c2-1 4-3 5-5l1-2s1 3-1 6c0 0 3-1 4 1s-1 4-3 5l-3 2c-2 1-4 3-5 5l-1 2"/>
+      <circle cx="15" cy="7" r="0.8" fill="currentColor" stroke="none"/>
+    </svg>
+  );
 
   return (
     <div className="app">
@@ -3497,10 +3466,18 @@ function App() {
         <nav className="nav">
           <div className="nav-section">Workspace</div>
           {NAV.map(n => (
-            <a key={n.id} href="#" className={route===n.id?"active":""} onClick={e=>{e.preventDefault(); setRoute(n.id);}}>
-              <Icon name={n.icon} size={15}/>
-              <span>{tl(n.i18n)}</span>
+            <a key={n.id} href="#" className={route===n.id?"active":""} onClick={e=>{e.preventDefault(); setRoute(n.id); if (n.id !== 'huginn') setHuginnInitialMsg("");}}
+              style={n.id === 'huginn' ? {position:"relative"} : undefined}>
+              {n.id === 'huginn' ? (
+                <RavenIcon size={15}/>
+              ) : (
+                <Icon name={n.icon} size={15}/>
+              )}
+              <span>{isEn() ? n.label.en : n.label.da}</span>
               {navBadges[n.id] && <span className="badge">{navBadges[n.id]}</span>}
+              {n.id === 'huginn' && (
+                <span style={{width:6, height:6, borderRadius:"50%", background:"var(--accent)", marginLeft:"auto", flexShrink:0}}/>
+              )}
             </a>
           ))}
 
@@ -3510,9 +3487,6 @@ function App() {
         </nav>
 
         <div className="side-footer">
-          <a href="#" className={route==="settings"?"active":""} onClick={e=>{e.preventDefault(); setRoute("settings");}}>
-            <Icon name="settings" size={15}/><span>{tl("nav.settings")}</span>
-          </a>
           <div className="account-chip">
             <div className="avatar">{(state.user?.email||'D').charAt(0).toUpperCase()}</div>
             <div className="account-chip-info">
@@ -3533,7 +3507,7 @@ function App() {
           <div className="breadcrumb">
             <span>Workspace</span>
             <Icon name="chevron" size={12}/>
-            <strong>{tl(currentNav?.i18n || "nav.overview")}</strong>
+            <strong>{isEn() ? currentNav.label.en : currentNav.label.da}</strong>
           </div>
           <div className="topbar-spacer"/>
           {household.length > 0 && (
@@ -3564,7 +3538,18 @@ function App() {
         </div>
 
         <div className={`content${privacyMode ? ' privacy-mode' : ''}`}>
-          <Screen key={safeActiveMember + '-' + route} state={route === 'huginn' ? state : filteredState} refresh={refresh} openModal={openModal} theme={theme} setTheme={setTheme} lang={lang} setLang={setLang} household={household} setHousehold={setHousehold} activeMember={activeMember} privacyMode={privacyMode}/>
+          {route === 'overview' && (
+            <Overview key={safeActiveMember + '-overview'} state={filteredState} refresh={refresh} activeMember={activeMember} privacyMode={privacyMode} navigateTo={navigateTo} sendQuickAsk={sendQuickAsk} />
+          )}
+          {route === 'accounts' && (
+            <AccountsScreen key={safeActiveMember + '-accounts'} state={filteredState} refresh={refresh} openModal={openModal} privacyMode={privacyMode} household={household} activeMember={activeMember} initialTab={accountsTab} />
+          )}
+          {route === 'huginn' && (
+            <HuginnScreen key="huginn" state={state} refresh={refresh} privacyMode={privacyMode} initialMessage={huginnInitialMsg} />
+          )}
+          {route === 'settings' && (
+            <SettingsScreen key="settings" state={filteredState} refresh={refresh} theme={theme} setTheme={setTheme} lang={lang} setLang={setLang} household={household} setHousehold={setHousehold} privacyMode={privacyMode} />
+          )}
         </div>
       </div>
 
