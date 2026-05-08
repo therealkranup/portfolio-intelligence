@@ -366,97 +366,112 @@ const Overview = ({ state, refresh, activeMember, privacyMode, navigateTo, sendQ
   // Rebalance done state (for health section)
   const [rebalDone, setRebalDone] = useState({});
 
-  // ── EMPTY-STATE: flexible entry points ──
+  // ── EMPTY-STATE: matches Overview dashboard card grid ──
   if (hasNoData) {
-    const quickStartCards = [
-      {
-        icon: "trending-up",
-        title: isEn() ? "Investments" : "Investeringer",
-        desc: isEn() ? "Import from Saxo, Nordnet, or add stocks & ETFs manually" : "Importer fra Saxo, Nordnet, eller tilføj aktier & ETF'er manuelt",
-        accent: "#4285F4",
-        action: () => navigateTo && navigateTo('import'),
-        actionLabel: isEn() ? "Import" : "Importer",
-        altAction: () => navigateTo && navigateTo('add-position'),
-        altLabel: isEn() ? "Add manually" : "Tilføj manuelt",
-      },
-      {
-        icon: "wallet",
-        title: isEn() ? "Cash & Savings" : "Kontanter & Opsparing",
-        desc: isEn() ? "Bank accounts, savings, emergency fund" : "Bankkonti, opsparing, nødopsparing",
-        accent: "#16a34a",
-        action: () => openModal && openModal('entry', { type: 'asset', category: 'cash' }),
-        actionLabel: isEn() ? "Add" : "Tilføj",
-      },
-      {
-        icon: "shield",
-        title: isEn() ? "Pension" : "Pension",
-        desc: isEn() ? "Employer pension, private savings, ATP" : "Arbejdsgiver pension, privat opsparing, ATP",
-        accent: "#7c3aed",
-        action: () => openModal && openModal('entry', { type: 'asset', category: 'pension' }),
-        actionLabel: isEn() ? "Add" : "Tilføj",
-      },
-      {
-        icon: "home",
-        title: isEn() ? "Property" : "Ejendom",
-        desc: isEn() ? "Home value, rental property, mortgage" : "Boligværdi, udlejningsejendom, realkreditlån",
-        accent: "#f59e0b",
-        action: () => openModal && openModal('entry', { type: 'asset', category: 'property' }),
-        actionLabel: isEn() ? "Add" : "Tilføj",
-      },
-      {
-        icon: "credit-card",
-        title: isEn() ? "Liabilities" : "Gæld",
-        desc: isEn() ? "Mortgage, car loan, student debt, credit cards" : "Realkreditlån, billån, studiegæld, kreditkort",
-        accent: "#dc2626",
-        action: () => openModal && openModal('entry', { type: 'liability' }),
-        actionLabel: isEn() ? "Add" : "Tilføj",
-      },
-      {
-        icon: "message",
-        title: isEn() ? "Ask Huginn" : "Spørg Huginn",
-        desc: isEn() ? "Get AI help — ask anything about your finances" : "Få AI-hjælp — spørg om hvad som helst om din økonomi",
-        accent: "var(--accent)",
-        action: () => navigateTo && navigateTo('huginn'),
-        actionLabel: isEn() ? "Chat" : "Chat",
-      },
-    ];
+    const emptyVal = (text) => <span style={{color:"var(--text-dim)", fontFamily:"var(--font-display)", fontSize:28}}>—</span>;
+    const addBtn = (label, onClick) => (
+      <button className="btn btn-sm" onClick={e => { e.stopPropagation(); onClick(); }} style={{fontSize:11, padding:"4px 10px"}}>
+        <Icon name="plus" size={12} style={{marginRight:3}}/> {label}
+      </button>
+    );
+    const importBtn = (onClick) => (
+      <button className="btn btn-sm" onClick={e => { e.stopPropagation(); onClick(); }} style={{fontSize:11, padding:"4px 10px"}}>
+        <Icon name="upload" size={12} style={{marginRight:3}}/> {isEn() ? 'Import' : 'Importer'}
+      </button>
+    );
 
     return (
       <div className="screen active">
         <div className="page-head">
           <div>
-            <h1 className="page-title">{isEn() ? <>Welcome to <em>Portfolio Intelligence</em></> : <>Velkommen til <em>Portfolio Intelligence</em></>}</h1>
-            <p className="page-subtitle">{isEn() ? 'Start anywhere — add what matters to you first' : 'Start hvor som helst — tilføj det der er vigtigt for dig'}</p>
+            <h1 className="page-title">{isEn() ? <>Good afternoon, <em>Welcome</em></> : <><em>Velkommen</em></>}</h1>
+            <p className="page-subtitle">{isEn() ? 'Your complete financial picture' : 'Dit samlede økonomiske billede'}</p>
           </div>
         </div>
 
-        <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(240px, 1fr))", gap:12, padding:"24px 0", maxWidth:720, margin:"0 auto"}}>
-          {quickStartCards.map((card, i) => (
-            <div key={i} className="card" style={{padding:"20px", cursor:"pointer", transition:"transform 0.15s, box-shadow 0.15s"}}
-              onClick={card.action}
-              onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 8px 24px rgba(0,0,0,0.15)"; }}
-              onMouseLeave={e => { e.currentTarget.style.transform = ""; e.currentTarget.style.boxShadow = ""; }}
-            >
-              <div style={{width:40, height:40, borderRadius:12, background:card.accent, opacity:0.9, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:12}}>
-                <Icon name={card.icon} size={20} style={{color:"#fff"}}/>
+        {/* Row 1: Net Worth, Investments, Portfolio Score */}
+        <div className="grid grid-12" style={{marginBottom:16}}>
+          <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => openModal && openModal('entry', { type: 'asset' })}>
+            <div className="eyebrow">{isEn() ? 'Net Worth' : 'Formue'}</div>
+            <div className="value" style={{fontSize:32, color:"var(--text-dim)"}}>—</div>
+            <div style={{marginTop:12, display:"flex", gap:6}}>
+              {addBtn(isEn() ? 'Add manually' : 'Tilføj manuelt', () => openModal && openModal('entry', { type: 'asset' }))}
+            </div>
+          </div>
+          <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => navigateTo && navigateTo('import')}>
+            <div className="eyebrow"><Icon name="trending-up" size={12} style={{marginRight:4, opacity:0.5}}/>{isEn() ? 'Investments' : 'Investeringer'}</div>
+            <div className="value" style={{fontSize:32, color:"var(--text-dim)"}}>—</div>
+            <div style={{marginTop:8, fontSize:12, color:"var(--text-dim)"}}>{isEn() ? 'Saxo, Nordnet, or manual' : 'Saxo, Nordnet eller manuelt'}</div>
+            <div style={{marginTop:10, display:"flex", gap:6}}>
+              {importBtn(() => navigateTo && navigateTo('import'))}
+              {addBtn(isEn() ? 'Add manually' : 'Tilføj manuelt', () => navigateTo && navigateTo('add-position'))}
+            </div>
+          </div>
+          <div className="card col-4 stat">
+            <div className="eyebrow">{isEn() ? 'Portfolio Score' : 'Porteføljescore'}</div>
+            <div style={{display:"flex", alignItems:"center", gap:12, marginTop:4}}>
+              <div style={{width:48, height:48, borderRadius:"50%", border:"3px solid var(--border)", display:"flex", alignItems:"center", justifyContent:"center"}}>
+                <span style={{fontFamily:"var(--font-mono)", fontSize:16, fontWeight:600, color:"var(--text-dim)"}}>—</span>
               </div>
-              <h3 style={{fontFamily:"var(--font-display)", fontSize:16, margin:"0 0 6px"}}>{card.title}</h3>
-              <p style={{color:"var(--text-muted)", fontSize:13, lineHeight:1.5, margin:"0 0 14px"}}>{card.desc}</p>
-              <div style={{display:"flex", gap:8, alignItems:"center"}}>
-                <button className="btn btn-sm btn-accent" onClick={e => { e.stopPropagation(); card.action(); }}>
-                  {card.actionLabel}
-                </button>
-                {card.altAction && (
-                  <button className="btn btn-sm btn-ghost" onClick={e => { e.stopPropagation(); card.altAction(); }}>
-                    {card.altLabel}
-                  </button>
-                )}
+              <div>
+                <div style={{fontSize:14, fontWeight:500, color:"var(--text-dim)"}}>{isEn() ? 'Add investments to score' : 'Tilføj investeringer for score'}</div>
               </div>
             </div>
-          ))}
+          </div>
         </div>
 
-        <p style={{textAlign:"center", color:"var(--text-muted)", fontSize:12, marginTop:8, opacity:0.7}}>
+        {/* Row 2: Pension, Home Equity, Cash & Savings */}
+        <div className="grid grid-12" style={{marginBottom:16}}>
+          <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => openModal && openModal('entry', { type: 'asset', category: 'pension' })}>
+            <div className="eyebrow"><Icon name="trending-up" size={12} style={{marginRight:4, opacity:0.5}}/>{isEn() ? 'Pension' : 'Pension'}</div>
+            <div className="value" style={{fontSize:28, color:"var(--text-dim)"}}>—</div>
+            <div style={{marginTop:8, fontSize:12, color:"var(--text-dim)"}}>{isEn() ? 'Employer, private, ATP' : 'Arbejdsgiver, privat, ATP'}</div>
+            <div style={{marginTop:10}}>
+              {addBtn(isEn() ? 'Add manually' : 'Tilføj manuelt', () => openModal && openModal('entry', { type: 'asset', category: 'pension' }))}
+            </div>
+          </div>
+          <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => openModal && openModal('entry', { type: 'asset', category: 'property' })}>
+            <div className="eyebrow"><Icon name="home" size={12} style={{marginRight:4, opacity:0.5}}/>{isEn() ? 'Home Equity' : 'Friværdi'}</div>
+            <div className="value" style={{fontSize:28, color:"var(--text-dim)"}}>—</div>
+            <div style={{marginTop:8, fontSize:12, color:"var(--text-dim)"}}>{isEn() ? 'Property value & mortgage' : 'Boligværdi & realkreditlån'}</div>
+            <div style={{marginTop:10}}>
+              {addBtn(isEn() ? 'Add manually' : 'Tilføj manuelt', () => openModal && openModal('entry', { type: 'asset', category: 'property' }))}
+            </div>
+          </div>
+          <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => openModal && openModal('entry', { type: 'asset', category: 'cash' })}>
+            <div className="eyebrow"><Icon name="dollar" size={12} style={{marginRight:4, opacity:0.5}}/>{isEn() ? 'Cash & Savings' : 'Kontanter & Opsparing'}</div>
+            <div className="value" style={{fontSize:28, color:"var(--text-dim)"}}>—</div>
+            <div style={{marginTop:8, fontSize:12, color:"var(--text-dim)"}}>{isEn() ? 'Bank accounts, savings' : 'Bankkonti, opsparing'}</div>
+            <div style={{marginTop:10}}>
+              {addBtn(isEn() ? 'Add manually' : 'Tilføj manuelt', () => openModal && openModal('entry', { type: 'asset', category: 'cash' }))}
+            </div>
+          </div>
+        </div>
+
+        {/* Row 3: Liabilities + Huginn */}
+        <div className="grid grid-12">
+          <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => openModal && openModal('entry', { type: 'liability' })}>
+            <div className="eyebrow"><Icon name="credit-card" size={12} style={{marginRight:4, opacity:0.5}}/>{isEn() ? 'Liabilities' : 'Gæld'}</div>
+            <div className="value" style={{fontSize:28, color:"var(--text-dim)"}}>—</div>
+            <div style={{marginTop:8, fontSize:12, color:"var(--text-dim)"}}>{isEn() ? 'Loans, credit cards, debt' : 'Lån, kreditkort, gæld'}</div>
+            <div style={{marginTop:10}}>
+              {addBtn(isEn() ? 'Add manually' : 'Tilføj manuelt', () => openModal && openModal('entry', { type: 'liability' }))}
+            </div>
+          </div>
+          <div className="card col-8 stat" style={{cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"space-between"}} onClick={() => navigateTo && navigateTo('huginn')}>
+            <div>
+              <div className="eyebrow"><Icon name="message" size={12} style={{marginRight:4, opacity:0.5}}/>{isEn() ? 'Huginn AI' : 'Huginn AI'}</div>
+              <div style={{fontSize:14, color:"var(--text-muted)", marginTop:6, lineHeight:1.5}}>
+                {isEn() ? 'Ask anything about your finances — or just start a conversation' : 'Spørg om hvad som helst om din økonomi — eller start en samtale'}
+              </div>
+            </div>
+            <button className="btn" onClick={e => { e.stopPropagation(); navigateTo && navigateTo('huginn'); }}>
+              <Icon name="message" size={14} style={{marginRight:4}}/> {isEn() ? 'Chat' : 'Chat'}
+            </button>
+          </div>
+        </div>
+
+        <p style={{textAlign:"center", color:"var(--text-dim)", fontSize:11, marginTop:20, opacity:0.6}}>
           {isEn() ? 'Your data stays on this device — no account needed' : 'Dine data forbliver på denne enhed — ingen konto nødvendig'}
         </p>
       </div>
