@@ -1049,7 +1049,7 @@ const InvestmentsTab = ({ state, refresh, openModal, privacyMode }) => {
   const sortArrow = (col) => sortCol === col ? (sortDir === 'desc' ? ' ▾' : ' ▴') : '';
 
   const filtered = useMemo(() => {
-    return positions
+    let list = positions
       .filter(h => {
         if (q && !h.ticker?.toLowerCase().includes(q.toLowerCase()) && !h.name?.toLowerCase().includes(q.toLowerCase())) return false;
         if (typeFilter !== "all" && h.type !== typeFilter) return false;
@@ -1058,8 +1058,48 @@ const InvestmentsTab = ({ state, refresh, openModal, privacyMode }) => {
           if (h.broker !== b || h.accountType !== a) return false;
         }
         return true;
-      })
-      .sort((a,b) => {
+      });
+
+    // Consolidate duplicate tickers when showing all accounts
+    if (acctFilter === "all") {
+      const groups = {};
+      list.forEach(h => {
+        const key = (h.ticker||'??').toUpperCase();
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(h);
+      });
+      list = Object.values(groups).map(items => {
+        if (items.length === 1) return items[0];
+        // Merge: weighted-average avgPrice, sum shares, keep latest price/history/daily change
+        const totalShares = items.reduce((s, p) => s + (p.shares || 0), 0);
+        // Weighted avg price: sum(shares * avgPrice) / totalShares — only count positions with avgPrice
+        const withAvg = items.filter(p => p.avgPrice && p.avgPrice > 0 && p.shares > 0);
+        const weightedAvg = withAvg.length > 0 && totalShares > 0
+          ? withAvg.reduce((s, p) => s + (p.shares * p.avgPrice), 0) / totalShares
+          : null;
+        // Use the first item as template (for ticker, name, type, currency, etc.)
+        const base = items[0];
+        // Collect all account labels for display
+        const acctLabels = items.map(p => {
+          const bl = brokerLabels[p.broker] || p.broker || '';
+          const al = accountLabels[p.accountType] || p.accountType || '';
+          return `${bl}·${al}`;
+        });
+        return {
+          ...base,
+          shares: totalShares,
+          avgPrice: weightedAvg,
+          currentPrice: base.currentPrice, // same ticker = same live price
+          priceChangePercent: base.priceChangePercent,
+          history: base.history,
+          _consolidated: true,
+          _sourceIds: items.map(p => p.id),
+          _acctLabels: acctLabels,
+        };
+      });
+    }
+
+    return list.sort((a,b) => {
         let va, vb;
         switch (sortCol) {
           case 'ticker': va = (a.ticker||'').toLowerCase(); vb = (b.ticker||'').toLowerCase(); return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
@@ -1186,7 +1226,13 @@ const InvestmentsTab = ({ state, refresh, openModal, privacyMode }) => {
                       </div>
                     </td>
                     <td><span className="pill" style={{textTransform:"uppercase", fontSize:10, letterSpacing:"0.06em"}}>{h.type}</span></td>
-                    <td style={{color:"var(--text-muted)", fontSize:12.5}}>{broker} · {acct}</td>
+                    <td style={{color:"var(--text-muted)", fontSize:12.5}}>
+                      {h._consolidated ? (
+                        <div style={{display:"flex", flexDirection:"column", gap:1}}>
+                          {h._acctLabels.map((lbl, i) => <div key={i} style={{fontSize:11, lineHeight:"1.3"}}>{lbl}</div>)}
+                        </div>
+                      ) : `${broker} · ${acct}`}
+                    </td>
                     <td className="num">{h.shares}</td>
                     <td className="num">
                       {h.currency && h.currency !== (APP_STATE.currency || 'DKK') ? (
@@ -1259,8 +1305,14 @@ const InvestmentsTab = ({ state, refresh, openModal, privacyMode }) => {
                     </td>
                     <td>
                       <div style={{display:"flex", gap:2, justifyContent:"flex-end"}}>
-                        <button className="icon-btn" style={{width:26, height:26}} onClick={()=>openModal('position', h)}><Icon name="edit" size={12}/></button>
-                        <button className="icon-btn" style={{width:26, height:26}} onClick={()=>deletePosition(h.id)}><Icon name="trash" size={12}/></button>
+                        {h._consolidated ? (
+                          <span style={{fontSize:10, color:"var(--text-dim)", padding:"4px 6px", background:"var(--bg-sunk)", borderRadius:6}}>{h._sourceIds.length} pos</span>
+                        ) : (
+                          <>
+                            <button className="icon-btn" style={{width:26, height:26}} onClick={()=>openModal('position', h)}><Icon name="edit" size={12}/></button>
+                            <button className="icon-btn" style={{width:26, height:26}} onClick={()=>deletePosition(h.id)}><Icon name="trash" size={12}/></button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
