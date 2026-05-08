@@ -2074,17 +2074,120 @@ const PropertyTab = ({ state, refresh, openModal, household, activeMember, priva
 // HUGINN -- Portfolio Chatbot
 // ==========================================================================
 const HuginnScreen = ({ state, refresh, privacyMode, initialMessage }) => {
-  // Persist chat in APP_STATE so it survives screen navigation
-  if (!APP_STATE._huginnMessages) APP_STATE._huginnMessages = [];
-  if (APP_STATE._huginnSessionStarted === undefined) APP_STATE._huginnSessionStarted = false;
-  const [messages, _setMessages] = useState(APP_STATE._huginnMessages);
-  const setMessages = (updater) => {
-    _setMessages(prev => {
+  // ── Chat persistence helpers ──────────────────────────────
+  const CHATS_KEY = 'pi-huginn-chats';
+  const ACTIVE_KEY = 'pi-huginn-active';
+
+  const loadChats = () => {
+    try { return JSON.parse(localStorage.getItem(CHATS_KEY)) || []; } catch { return []; }
+  };
+  const saveChats = (chats) => {
+    try { localStorage.setItem(CHATS_KEY, JSON.stringify(chats)); } catch {}
+  };
+  const loadActiveId = () => {
+    try { return localStorage.getItem(ACTIVE_KEY) || null; } catch { return null; }
+  };
+  const saveActiveId = (id) => {
+    try { localStorage.setItem(ACTIVE_KEY, id || ''); } catch {}
+  };
+
+  // Initialize: load saved conversations or migrate from old in-memory state
+  const [chats, setChatsState] = useState(() => {
+    const saved = loadChats();
+    // Migrate old in-memory messages if any
+    if (saved.length === 0 && APP_STATE._huginnMessages && APP_STATE._huginnMessages.length > 0) {
+      const migrated = [{
+        id: 'chat-' + Date.now(),
+        title: APP_STATE._huginnMessages.find(m => m.role === 'user')?.content?.substring(0, 50) || 'Portfolio overview',
+        messages: APP_STATE._huginnMessages,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }];
+      saveChats(migrated);
+      saveActiveId(migrated[0].id);
+      return migrated;
+    }
+    return saved;
+  });
+  const setChats = (updater) => {
+    setChatsState(prev => {
       const next = typeof updater === 'function' ? updater(prev) : updater;
-      APP_STATE._huginnMessages = next;
+      saveChats(next);
       return next;
     });
   };
+
+  const [activeChatId, _setActiveChatId] = useState(() => {
+    const saved = loadActiveId();
+    const allChats = loadChats();
+    if (saved && allChats.find(c => c.id === saved)) return saved;
+    if (allChats.length > 0) return allChats[0].id;
+    return null;
+  });
+  const setActiveChatId = (id) => { _setActiveChatId(id); saveActiveId(id); };
+
+  const activeChat = chats.find(c => c.id === activeChatId) || null;
+  const messages = activeChat?.messages || [];
+
+  // Wrapper: update messages for the active chat
+  const setMessages = (updater) => {
+    setChats(prev => prev.map(c => {
+      if (c.id !== activeChatId) return c;
+      const newMsgs = typeof updater === 'function' ? updater(c.messages) : updater;
+      // Auto-title from first user message
+      let title = c.title;
+      if (title === 'New chat' || title === 'Ny chat') {
+        const firstUser = newMsgs.find(m => m.role === 'user');
+        if (firstUser) title = firstUser.content.substring(0, 60) + (firstUser.content.length > 60 ? '...' : '');
+      }
+      return { ...c, messages: newMsgs, title, updatedAt: new Date().toISOString() };
+    }));
+    // Keep APP_STATE in sync for tab navigation
+    APP_STATE._huginnMessages = typeof updater === 'function' ? updater(messages) : updater;
+  };
+
+  // Create a new chat
+  const createNewChat = () => {
+    const newChat = {
+      id: 'chat-' + Date.now(),
+      title: isEn() ? 'New chat' : 'Ny chat',
+      messages: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    setChats(prev => [newChat, ...prev]);
+    setActiveChatId(newChat.id);
+    APP_STATE._huginnMessages = [];
+    APP_STATE._huginnSessionStarted = false;
+    return newChat.id;
+  };
+
+  // Delete a chat
+  const deleteChat = (chatId) => {
+    setChats(prev => prev.filter(c => c.id !== chatId));
+    if (activeChatId === chatId) {
+      const remaining = chats.filter(c => c.id !== chatId);
+      if (remaining.length > 0) {
+        setActiveChatId(remaining[0].id);
+        APP_STATE._huginnMessages = remaining[0].messages;
+      } else {
+        createNewChat();
+      }
+    }
+  };
+
+  // Switch to a chat
+  const switchChat = (chatId) => {
+    setActiveChatId(chatId);
+    const chat = chats.find(c => c.id === chatId);
+    APP_STATE._huginnMessages = chat?.messages || [];
+    APP_STATE._huginnSessionStarted = chat?.messages?.length > 0;
+  };
+
+  // Sidebar toggle
+  const [showHistory, setShowHistory] = useState(false);
+
+  if (!APP_STATE._huginnSessionStarted) APP_STATE._huginnSessionStarted = false;
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const chatEndRef = useRef(null);
@@ -2315,20 +2418,32 @@ IMPORTANT: When the user asks about their exposure to a specific stock (e.g. Goo
 
   // Send initial portfolio overview on first visit (only once per app session)
   useEffect(() => {
-    if (!APP_STATE._huginnSessionStarted && messages.length === 0) {
+    // If no chats exist at all, create one and auto-send overview
+    if (chats.length === 0) {
+      const newId = createNewChat();
+      APP_STATE._huginnSessionStarted = true;
+      const initMsg = [{ role: 'user', content: 'Give me a quick overview of my portfolio — what stands out, what tensions do you see, and what should I be thinking about?' }];
+      // Delay slightly to let state settle
+      setTimeout(() => sendToHuginn(initMsg), 50);
+    } else if (activeChatId && messages.length === 0 && !APP_STATE._huginnSessionStarted) {
+      // Active chat is empty and session not started — send overview
       APP_STATE._huginnSessionStarted = true;
       const initMsg = [{ role: 'user', content: 'Give me a quick overview of my portfolio — what stands out, what tensions do you see, and what should I be thinking about?' }];
       sendToHuginn(initMsg);
     }
-  }, []);
+  }, [activeChatId]);
 
   // Handle initial message from quick ask bar
   useEffect(() => {
     if (initialMessage && initialMessage.trim()) {
-      const userMsg = { role: 'user', content: initialMessage.trim() };
-      const newMessages = [...messages, userMsg];
-      setMessages(newMessages);
-      sendToHuginn(newMessages);
+      // Create a new chat for quick-ask messages
+      const newId = createNewChat();
+      setTimeout(() => {
+        const userMsg = { role: 'user', content: initialMessage.trim() };
+        const newMessages = [userMsg];
+        setMessages(newMessages);
+        sendToHuginn(newMessages);
+      }, 50);
     }
   }, [initialMessage]);
 
@@ -2405,13 +2520,7 @@ IMPORTANT: When the user asks about their exposure to a specific stock (e.g. Goo
   };
 
   const clearChat = () => {
-    setMessages([]);
-    APP_STATE._huginnSessionStarted = false;
-    setTimeout(() => {
-      APP_STATE._huginnSessionStarted = true;
-      const initMsg = [{ role: 'user', content: 'Give me a quick overview of my portfolio — what stands out, what tensions do you see, and what should I be thinking about?' }];
-      sendToHuginn(initMsg);
-    }, 100);
+    createNewChat();
   };
 
   // Raven SVG icon
@@ -2434,44 +2543,109 @@ IMPORTANT: When the user asks about their exposure to a specific stock (e.g. Goo
     return html;
   };
 
+  // Format date for history sidebar
+  const fmtDate = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const now = new Date();
+    const diff = now - d;
+    if (diff < 86400000) return isEn() ? 'Today' : 'I dag';
+    if (diff < 172800000) return isEn() ? 'Yesterday' : 'I gaar';
+    if (diff < 604800000) return d.toLocaleDateString(isEn() ? 'en' : 'da', { weekday: 'short' });
+    return d.toLocaleDateString(isEn() ? 'en' : 'da', { day: 'numeric', month: 'short' });
+  };
+
   return (
-    <div className="screen active" style={{display: "flex", flexDirection: "column", height: "calc(100vh - 80px)", maxHeight: "calc(100vh - 80px)"}}>
-      {/* Header */}
-      <div className="page-head" style={{flexShrink: 0}}>
-        <div>
-          <h1 className="page-title" style={{display: "flex", alignItems: "center", gap: 10}}>
-            <RavenIcon size={32} style={{color: "var(--accent)", opacity: 0.8}}/>
-            <span><em>Huginn</em></span>
-          </h1>
-          <p className="page-subtitle">{isEn() ? "Odin's raven sees your portfolio" : "Odins ravn ser din portefolje"}</p>
-        </div>
-        <div className="page-actions">
-          <button className="btn" onClick={clearChat} style={{fontSize: 12}}>
-            <Icon name="refresh" size={13}/> {isEn() ? 'New session' : 'Ny session'}
-          </button>
+    <div className="screen active" style={{display: "flex", height: "calc(100vh - 80px)", maxHeight: "calc(100vh - 80px)"}}>
+
+      {/* ── Chat history sidebar ── */}
+      <div style={{
+        width: showHistory ? 260 : 0, overflow: "hidden", transition: "width 0.25s ease",
+        borderRight: showHistory ? "1px solid var(--border)" : "none",
+        display: "flex", flexDirection: "column", flexShrink: 0,
+        background: "var(--bg-sunk)",
+      }}>
+        <div style={{width: 260, height: "100%", display: "flex", flexDirection: "column"}}>
+          <div style={{padding: "14px 16px 10px", display: "flex", alignItems: "center", justifyContent: "space-between"}}>
+            <span style={{fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-dim)"}}>{isEn() ? 'Chat History' : 'Chathistorik'}</span>
+            <button onClick={() => setShowHistory(false)} style={{background: "none", border: "none", cursor: "pointer", color: "var(--text-dim)", padding: 4}}>
+              <Icon name="x" size={14}/>
+            </button>
+          </div>
+          <div style={{flex: 1, overflowY: "auto", padding: "0 8px 8px"}}>
+            {chats.map(c => (
+              <div key={c.id}
+                onClick={() => { switchChat(c.id); setShowHistory(false); }}
+                style={{
+                  padding: "10px 12px", borderRadius: 10, marginBottom: 4, cursor: "pointer",
+                  background: c.id === activeChatId ? "var(--accent-10, rgba(200,149,108,0.12))" : "transparent",
+                  border: c.id === activeChatId ? "1px solid var(--accent-20, rgba(200,149,108,0.2))" : "1px solid transparent",
+                  transition: "background 0.15s",
+                }}>
+                <div style={{fontSize: 13, fontWeight: c.id === activeChatId ? 600 : 400, color: "var(--text)", lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"}}>{c.title}</div>
+                <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4}}>
+                  <span style={{fontSize: 11, color: "var(--text-dim)"}}>{fmtDate(c.updatedAt)} &middot; {c.messages.length} {isEn() ? 'msgs' : 'besk.'}</span>
+                  <button onClick={(e) => { e.stopPropagation(); deleteChat(c.id); }}
+                    style={{background: "none", border: "none", cursor: "pointer", color: "var(--text-dim)", padding: "2px 4px", fontSize: 11, opacity: 0.5, borderRadius: 4}}
+                    onMouseOver={e => e.target.style.opacity = 1}
+                    onMouseOut={e => e.target.style.opacity = 0.5}>
+                    <Icon name="trash" size={12}/>
+                  </button>
+                </div>
+              </div>
+            ))}
+            {chats.length === 0 && (
+              <div style={{padding: 16, textAlign: "center", color: "var(--text-dim)", fontSize: 13}}>
+                {isEn() ? 'No conversations yet' : 'Ingen samtaler endnu'}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Chat area */}
-      <div style={{
-        flex: 1, overflowY: "auto", padding: "0 0 16px 0",
-        display: "flex", flexDirection: "column", gap: 0,
-        minHeight: 0,
-      }}>
-        {/* Intro card — only when no messages yet */}
-        {messages.length === 0 && !loading && (
-          <div style={{
-            textAlign: "center", padding: "48px 24px", color: "var(--text-dim)",
-            display: "flex", flexDirection: "column", alignItems: "center", gap: 12,
-          }}>
-            <RavenIcon size={48} style={{color: "var(--text-dim)", opacity: 0.3}}/>
-            <div style={{fontSize: 14, maxWidth: 400, lineHeight: 1.6}}>
-              {isEn()
-                ? 'Huginn flies out each day, observes your portfolio through the eyes of legendary investors, and returns with what it saw.'
-                : 'Huginn flyver ud hver dag, observerer din portefolje gennem legendariske investorers ojne og vender tilbage med hvad den saa.'}
-            </div>
+      {/* ── Main chat column ── */}
+      <div style={{flex: 1, display: "flex", flexDirection: "column", minWidth: 0}}>
+        {/* Header */}
+        <div className="page-head" style={{flexShrink: 0}}>
+          <div>
+            <h1 className="page-title" style={{display: "flex", alignItems: "center", gap: 10}}>
+              <RavenIcon size={32} style={{color: "var(--accent)", opacity: 0.8}}/>
+              <span><em>Huginn</em></span>
+            </h1>
+            <p className="page-subtitle">{isEn() ? "Odin's raven sees your portfolio" : "Odins ravn ser din portefolje"}</p>
           </div>
-        )}
+          <div className="page-actions" style={{display: "flex", gap: 6}}>
+            <button className="btn" onClick={() => setShowHistory(!showHistory)} style={{fontSize: 12}}
+              title={isEn() ? 'Chat history' : 'Chathistorik'}>
+              <Icon name="clock" size={13}/> {isEn() ? 'History' : 'Historik'}
+              {chats.length > 1 && <span style={{marginLeft: 4, padding: "1px 6px", borderRadius: 10, background: "var(--accent)", color: "#fff", fontSize: 10, fontWeight: 700}}>{chats.length}</span>}
+            </button>
+            <button className="btn" onClick={clearChat} style={{fontSize: 12}}>
+              <Icon name="plus" size={13}/> {isEn() ? 'New chat' : 'Ny chat'}
+            </button>
+          </div>
+        </div>
+
+        {/* Chat area */}
+        <div style={{
+          flex: 1, overflowY: "auto", padding: "0 0 16px 0",
+          display: "flex", flexDirection: "column", gap: 0,
+          minHeight: 0,
+        }}>
+          {/* Intro card — only when no messages yet */}
+          {messages.length === 0 && !loading && (
+            <div style={{
+              textAlign: "center", padding: "48px 24px", color: "var(--text-dim)",
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 12,
+            }}>
+              <RavenIcon size={48} style={{color: "var(--text-dim)", opacity: 0.3}}/>
+              <div style={{fontSize: 14, maxWidth: 400, lineHeight: 1.6}}>
+                {isEn()
+                  ? 'Huginn flies out each day, observes your portfolio through the eyes of legendary investors, and returns with what it saw.'
+                  : 'Huginn flyver ud hver dag, observerer din portefolje gennem legendariske investorers ojne og vender tilbage med hvad den saa.'}
+              </div>
+            </div>
+          )}
 
         {/* Messages */}
         {messages.map((msg, i) => (
@@ -2586,6 +2760,7 @@ IMPORTANT: When the user asks about their exposure to a specific stock (e.g. Goo
           40% { opacity: 1; transform: scale(1.1); }
         }
       `}</style>
+      </div>{/* end main chat column */}
     </div>
   );
 };
