@@ -170,6 +170,20 @@ async function fetchLivePrices() {
             const oldPrice = p.currentPrice;
             p.currentPrice = pd.price;
             p.priceCurrency = pd.currency;
+            // Update position currency to match live price source (e.g. crypto DKK→USD)
+            if (pd.currency && pd.currency !== p.currency) {
+              // Convert avgPrice to the new currency so P&L% stays correct
+              if (p.avgPrice && p.avgPrice > 0) {
+                const fx = window.FX_RATES || { DKK:1, USD:6.85, EUR:7.46 };
+                const oldCcy = p.currency || 'DKK';
+                const newCcy = pd.currency;
+                // Convert: oldCcy → DKK → newCcy
+                const toDkk = oldCcy === 'DKK' ? 1 : (fx[oldCcy] || 1);
+                const fromDkk = newCcy === 'DKK' ? 1 : (1 / (fx[newCcy] || 1));
+                p.avgPrice = p.avgPrice * toDkk * fromDkk;
+              }
+              p.currency = pd.currency;
+            }
             if (pd.name && !p.name) p.name = pd.name;
 
             // Use server-provided change data if available, otherwise compute from old price

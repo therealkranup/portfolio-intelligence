@@ -3153,6 +3153,17 @@ NORDNET INDEX FUNDS — CRITICAL:
   "Nordnet Indeks" → ticker: "NORDNET_IDX", name: "Nordnet Indeks", type: "fund"
 - For ALL Nordnet index funds: currency is ALWAYS "DKK"
 
+CRYPTO (Lunar app, Coinbase, etc.) — CRITICAL:
+- Set type to "crypto" for ALL cryptocurrency positions
+- Use the coin symbol as ticker (BTC, ETH, SOL, etc.) — do NOT append -USD, the app handles that
+- Lunar shows all values in DKK. Set currency to "DKK"
+- "shares" = the fractional amount (e.g. 4.10856821 for ETH). Keep ALL decimal places
+- The main DKK value shown is the current market value = "value"
+- currentPrice = value / shares (calculate if not shown per-unit)
+- The green/red DKK amount with arrow (↗ or ↘) followed by "All" is the TOTAL COST BASIS (not per-unit avgPrice)
+- avgPrice = totalCostBasis / shares. E.g. if cost basis is "DKK 37,757.52 All" and shares is 4.10856821, then avgPrice = 37757.52 / 4.10856821 = 9190.14
+- IMPORTANT: You MUST calculate avgPrice as costBasis/shares for every crypto position
+
 CURRENCY — THIS IS CRITICAL:
 - Each position may be traded in a DIFFERENT currency (DKK, USD, EUR, SEK, NOK, GBP, etc.)
 - If there is a "Currency" column, USE IT directly for each row
@@ -3164,7 +3175,8 @@ TICKER — VERY IMPORTANT:
 - NEVER use ISINs (e.g. US5949181045). ALWAYS convert to Yahoo Finance ticker symbols.
 - Common mappings: Alphabet=GOOGL, Microsoft=MSFT, Tesla=TSLA, Meta=META, Amazon=AMZN, Apple=AAPL, Nvidia=NVDA, Nio=NIO, PayPal=PYPL, Marvell=MRVL, Senseonics=SENS, Berkshire Hathaway B=BRK-B, D-Wave=QBTS, Archer Aviation=ACHR, Nano Dimension=NNDM, Norwegian Air Shuttle=NAS.OL, Oklo=OKLO, Ørsted=ORSTED.CO
 - For Danish stocks, append .CO (e.g. Novo Nordisk B=NOVO-B.CO, Vestas=VWS.CO)
-- "type" should be "etf" for ETFs, "fund" for mutual funds/index funds, "stock" for individual stocks
+- "type" should be "etf" for ETFs, "fund" for mutual funds/index funds, "stock" for individual stocks, "crypto" for cryptocurrencies
+- CRYPTO DETECTION: If tickers are BTC, ETH, SOL, ADA, DOGE, LINK, LTC, UNI, ZEC, BAT, XRP, DOT, AVAX, MATIC, SHIB, or any other cryptocurrency — set type to "crypto". Crypto portfolios typically show fractional holdings (e.g. 4.10856821 ETH, 0.05717538 BTC). The platform "Lunar" is a Danish crypto app.
 - If the document shows ISINs, you MUST look up and return the correct Yahoo Finance ticker instead
 
 Return ONLY valid JSON (no markdown, no code fences, no explanation). Use this exact schema:
@@ -3212,6 +3224,31 @@ IMPORTANT: Always include "value" (total market value of the position) AND "curr
               'NORDNET_NYE_MARKEDER_INDEKS': 'NORDNET_EM_IDX',
               'NORDNET_TEKNOLOGI_INDEKS_DKK': 'NORDNET_TECH_IDX',
               'NORDNET_STABILE_AKTIER_INDEKS': 'NORDNET_STABLE_IDX',
+              // Crypto → Yahoo Finance tickers
+              'BTC': 'BTC-USD', 'BITCOIN': 'BTC-USD',
+              'ETH': 'ETH-USD', 'ETHEREUM': 'ETH-USD',
+              'SOL': 'SOL-USD', 'SOLANA': 'SOL-USD',
+              'ADA': 'ADA-USD', 'CARDANO': 'ADA-USD',
+              'DOGE': 'DOGE-USD', 'DOGECOIN': 'DOGE-USD',
+              'LINK': 'LINK-USD', 'CHAINLINK': 'LINK-USD',
+              'LTC': 'LTC-USD', 'LITECOIN': 'LTC-USD',
+              'UNI': 'UNI-USD', 'UNISWAP': 'UNI-USD',
+              'ZEC': 'ZEC-USD', 'ZCASH': 'ZEC-USD',
+              'BAT': 'BAT-USD',
+              'XRP': 'XRP-USD', 'RIPPLE': 'XRP-USD',
+              'DOT': 'DOT-USD', 'POLKADOT': 'DOT-USD',
+              'AVAX': 'AVAX-USD', 'AVALANCHE': 'AVAX-USD',
+              'MATIC': 'MATIC-USD', 'POLYGON': 'MATIC-USD',
+              'SHIB': 'SHIB-USD',
+              'ATOM': 'ATOM-USD', 'COSMOS': 'ATOM-USD',
+              'FIL': 'FIL-USD', 'FILECOIN': 'FIL-USD',
+              'AAVE': 'AAVE-USD',
+              'ALGO': 'ALGO-USD', 'ALGORAND': 'ALGO-USD',
+              'NEAR': 'NEAR-USD',
+              'APE': 'APE-USD',
+              'MANA': 'MANA-USD',
+              'SAND': 'SAND-USD',
+              'FTM': 'FTM-USD', 'FANTOM': 'FTM-USD',
             };
             if (parsed.positions) parsed.positions.forEach(p => {
               // Skip positions with no ticker and no name
@@ -3223,12 +3260,19 @@ IMPORTANT: Always include "value" (total market value of the position) AND "curr
               if (!currentPrice && p.value && p.shares && p.shares > 0) {
                 currentPrice = p.value / p.shares;
               }
+              // Auto-detect crypto: if ticker ends in -USD after normalization, or type is crypto
+              const isCrypto = ticker.endsWith('-USD') || p.type === 'crypto';
+              const posType = isCrypto ? 'crypto' : (p.type || 'stock');
+              const posCurrency = isCrypto ? 'DKK' : (p.currency || 'DKK'); // Lunar shows values in DKK
               APP_STATE.positions.push({
-                ...p, id: crypto.randomUUID(), broker, accountType,
+                ...p, id: crypto.randomUUID(),
+                broker: isCrypto && broker === 'saxo' ? 'lunar' : broker,
+                accountType: isCrypto ? 'crypto' : accountType,
                 ticker,
+                type: posType,
                 currentPrice,
                 avgPrice: p.avgPrice || 0,
-                currency: p.currency || 'DKK',
+                currency: posCurrency,
                 owner: owner === 'me' ? undefined : owner,
               });
               imported++;
