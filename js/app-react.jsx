@@ -3042,16 +3042,25 @@ const ImportModal = ({ open, onClose, refresh, activeMember }) => {
 
 CRITICAL RULES for extracting positions:
 
-SHARES — YOU MUST CALCULATE THIS:
-- "shares" = the NUMBER OF UNITS/SHARES owned. Look for "Quantity", "Antal", "Units", "Andele" column.
-- If there is NO shares/quantity column but there IS a "Value" (Værdi, Markedsværdi) AND a per-unit price (NAV, Kurs), YOU MUST CALCULATE: shares = Value / NAV. For example: Value=7,016 kr and NAV=270.10 DKK → shares = 7016 / 270.10 = 25.975.
-- NEVER set shares to 0 if you can calculate it. A position with 0 shares is useless.
+NORDNET COLUMN MAPPING (CRITICAL — these are the exact Danish column headers):
+- "Antal" = shares (number of units owned). Use this directly.
+- "GAK" (Gennemsnitlig Anskaffelseskurs) = avgPrice (average purchase price per share). ALWAYS map GAK → avgPrice.
+- "Indre værdi" = NAV = currentPrice (current price per share/unit). ALWAYS map this → currentPrice.
+- "Anskaffelsessum" or "Anskaffelsess..." = total cost basis (NOT used directly, but can verify: cost = shares × avgPrice).
+- "Værdi DKK" = total market value. Include as "value" in output.
+- "Ureal.afka..." = unrealized return percentage (informational only).
+- "Afkast DKK" = unrealized return in DKK (informational only).
+- "1 dag %" = daily change percentage (informational only).
+
+SHARES:
+- "shares" = the NUMBER OF UNITS/SHARES owned. Look for "Antal" column first.
+- If there is NO shares/quantity column but there IS a "Value" AND a per-unit price (NAV/Kurs), CALCULATE: shares = Value / NAV.
+- NEVER set shares to 0 if you can calculate or read it.
 
 PRICES:
-- "currentPrice" = the CURRENT/LATEST price PER SINGLE SHARE. Use "Last", "Kurs", "Seneste", "NAV" column. CRITICAL: For mutual funds and index funds, the NAV IS the currentPrice — you MUST set currentPrice to the NAV value, NEVER leave it as 0 when a NAV is visible.
-- "avgPrice" = the average purchase price per share. Use "Open price", "Avg price", "GAK", "Gns. kurs", "Købskurs" column. If NOT shown, set to 0.
-- IMPORTANT: "Open price" in Saxo Bank means the AVERAGE PURCHASE PRICE, not the current price. Put it in "avgPrice", NOT "currentPrice".
-- VERIFICATION: After extracting, check every position. If shares > 0 but currentPrice = 0 and you can see ANY price or NAV for that fund, you MUST set currentPrice to that value.
+- "currentPrice" = the CURRENT/LATEST price PER SINGLE SHARE. Use "Indre værdi", "NAV", "Kurs", "Last", "Seneste". For mutual funds, NAV IS the currentPrice. NEVER leave it as 0 when a NAV is visible.
+- "avgPrice" = the average purchase price per share. Use "GAK", "Gns. kurs", "Open price", "Avg price", "Købskurs". IMPORTANT: On Nordnet, "GAK" is ALWAYS the average purchase price. On Saxo, "Open price" = average purchase price.
+- VERIFICATION: After extracting, check every position. If shares > 0 but currentPrice = 0 and you can see ANY price/NAV, you MUST set currentPrice. If GAK is visible, avgPrice MUST NOT be 0.
 
 NORDNET INDEX FUNDS — CRITICAL:
 - Nordnet has proprietary index funds that are NOT on Yahoo Finance. Use these EXACT ticker mappings:

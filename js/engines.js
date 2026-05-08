@@ -9,6 +9,90 @@ function posValDKK(p) {
   return (typeof toDKK === 'function') ? toDKK(raw, p.currency) : raw;
 }
 
+// ── Static fund data for proprietary Nordnet index funds (not on Yahoo Finance) ──
+const NORDNET_FUND_DATA = {
+  NORDNET_DK_IDX: {
+    topHoldings: [
+      { name: 'DSV', ticker: 'DSV.CO', weight: 13.72 },
+      { name: 'Danske Bank', ticker: 'DANSKE.CO', weight: 10.99 },
+      { name: 'Novo Nordisk B', ticker: 'NOVO-B.CO', weight: 9.49 },
+      { name: 'Vestas Wind', ticker: 'VWS.CO', weight: 9.10 },
+      { name: 'Novozymes', ticker: 'NZYM-B.CO', weight: 8.10 },
+      { name: 'Genmab', ticker: 'GMAB.CO', weight: 7.38 },
+      { name: 'Coloplast', ticker: 'COLO-B.CO', weight: 5.13 },
+      { name: 'Oersted', ticker: 'ORSTED.CO', weight: 3.91 },
+      { name: 'Pandora', ticker: 'PNDORA.CO', weight: 3.54 },
+      { name: 'Moller Maersk B', ticker: 'MAERSK-B.CO', weight: 2.96 },
+    ],
+    geography: { Denmark: 100 },
+    sectors: { Industrials: 36.84, Healthcare: 31.93, 'Financial Services': 19.21, 'Basic Materials': 6.63, Utilities: 3.45, 'Consumer Cyclical': 1.94 },
+  },
+  NORDNET_GLOBAL_125: {
+    topHoldings: [
+      { name: 'NVIDIA', ticker: 'NVDA', weight: 7.0 },
+      { name: 'Apple', ticker: 'AAPL', weight: 6.4 },
+      { name: 'Microsoft', ticker: 'MSFT', weight: 4.8 },
+      { name: 'Amazon', ticker: 'AMZN', weight: 4.7 },
+      { name: 'Tesla', ticker: 'TSLA', weight: 4.6 },
+      { name: 'Broadcom', ticker: 'AVGO', weight: 3.2 },
+      { name: 'Alphabet A', ticker: 'GOOGL', weight: 2.8 },
+      { name: 'Alphabet C', ticker: 'GOOG', weight: 2.4 },
+      { name: 'Meta Platforms', ticker: 'META', weight: 2.1 },
+      { name: 'Eli Lilly', ticker: 'LLY', weight: 1.7 },
+    ],
+    geography: { US: 93.3, Eurozone: 10.7, Japan: 6.8, 'Europe ex-Eurozone': 5.2, UK: 3.8, Canada: 3.7, Australasia: 1.8 },
+    sectors: { Technology: 35.7, 'Financial Services': 17.9, Healthcare: 15.9, Industrials: 11.9, 'Consumer Cyclical': 11.7, 'Communication Services': 10.4, 'Consumer Defensive': 7.5, 'Basic Materials': 4.5, Energy: 3.3, 'Real Estate': 2.8 },
+  },
+  NORDNET_GLOBAL_DKK: {
+    topHoldings: [
+      { name: 'NVIDIA', ticker: 'NVDA', weight: 5.47 },
+      { name: 'Apple', ticker: 'AAPL', weight: 4.95 },
+      { name: 'Microsoft', ticker: 'MSFT', weight: 3.69 },
+      { name: 'Amazon', ticker: 'AMZN', weight: 3.63 },
+      { name: 'Tesla', ticker: 'TSLA', weight: 3.59 },
+      { name: 'Broadcom', ticker: 'AVGO', weight: 2.47 },
+      { name: 'Alphabet A', ticker: 'GOOGL', weight: 2.21 },
+      { name: 'Alphabet C', ticker: 'GOOG', weight: 1.85 },
+      { name: 'Meta Platforms', ticker: 'META', weight: 1.63 },
+      { name: 'Eli Lilly', ticker: 'LLY', weight: 1.34 },
+    ],
+    geography: { US: 73.28, Eurozone: 8.4, Japan: 5.37, 'Europe ex-Eurozone': 4.12, UK: 2.98 },
+    sectors: { Technology: 29.55, 'Financial Services': 15.17, 'Consumer Cyclical': 12.5, Healthcare: 11.99, Industrials: 9.33, 'Communication Services': 9.09, 'Consumer Defensive': 3.62, 'Real Estate': 2.93, Utilities: 2.91, 'Basic Materials': 2.33, Energy: 0.57 },
+  },
+  NORDNET_EM_IDX: {
+    topHoldings: [
+      { name: 'TSMC', ticker: 'TSM', weight: 13.8 },
+      { name: 'Alibaba', ticker: 'BABA', weight: 5.6 },
+      { name: 'Tencent', ticker: '0700.HK', weight: 4.59 },
+      { name: 'SK Hynix', ticker: '000660.KS', weight: 3.68 },
+      { name: 'Samsung Electronics', ticker: '005930.KS', weight: 1.69 },
+      { name: 'Xiaomi', ticker: '1810.HK', weight: 1.47 },
+      { name: 'MediaTek', ticker: '2454.TW', weight: 1.47 },
+      { name: 'Delta Electronics', ticker: '2308.TW', weight: 1.23 },
+      { name: 'BYD Company', ticker: '1211.HK', weight: 1.11 },
+      { name: 'PDD (Pinduoduo)', ticker: 'PDD', weight: 0.96 },
+    ],
+    geography: { 'Emerging Asia': 42.07, 'Asia Developed': 38.74, 'Latin America': 5.78, 'Middle East': 5.15, Africa: 3.36 },
+    sectors: { Technology: 36.27, 'Financial Services': 21.05, 'Consumer Cyclical': 12.55, 'Communication Services': 8.3, Industrials: 5.95, Healthcare: 4.65, 'Basic Materials': 3.39, 'Consumer Defensive': 3.2, 'Real Estate': 2.48, Utilities: 1.27, Energy: 0.89 },
+  },
+  NORDNET_TECH_IDX: {
+    topHoldings: [
+      { name: 'Apple', ticker: 'AAPL', weight: 10.06 },
+      { name: 'Microsoft', ticker: 'MSFT', weight: 10.04 },
+      { name: 'NVIDIA', ticker: 'NVDA', weight: 9.69 },
+      { name: 'Broadcom', ticker: 'AVGO', weight: 7.50 },
+      { name: 'Meta Platforms', ticker: 'META', weight: 6.71 },
+      { name: 'Alphabet A', ticker: 'GOOGL', weight: 5.44 },
+      { name: 'Alphabet C', ticker: 'GOOG', weight: 4.54 },
+      { name: 'ASML Holding', ticker: 'ASML', weight: 2.70 },
+      { name: 'Micron Technology', ticker: 'MU', weight: 2.05 },
+      { name: 'Palantir', ticker: 'PLTR', weight: 1.80 },
+    ],
+    geography: { US: 88.83, Eurozone: 4.97, Japan: 3.38, Canada: 1.29, 'Emerging Asia': 0.4 },
+    sectors: { Technology: 79.72, 'Communication Services': 19.87, Industrials: 0.35, 'Consumer Cyclical': 0.06 },
+  },
+};
+
 // ── 1. Portfolio → Formue Auto-Sync ──
 // Keeps net-worth entries in sync with portfolio positions grouped by broker+account
 
@@ -136,11 +220,28 @@ async function runOverlapAnalysis() {
     value: posValDKK(p),
   }));
 
+  // Check if all positions are Nordnet proprietary funds with static data
+  const allHaveStaticData = positions.every(p => NORDNET_FUND_DATA[p.ticker]);
+
+  // If we have static data for all funds, compute overlap locally (no API call needed)
+  if (allHaveStaticData) {
+    const data = computeLocalOverlap(positions);
+    APP_STATE.overlapData = data;
+    saveData();
+    return data;
+  }
+
   try {
+    // Include static fund data in the API request so the AI knows these funds
+    const staticHints = positions
+      .filter(p => NORDNET_FUND_DATA[p.ticker])
+      .map(p => `\nKNOWN DATA for ${p.ticker} (${p.name}):\n  Top holdings: ${NORDNET_FUND_DATA[p.ticker].topHoldings.map(h => h.name + ' ' + h.weight + '%').join(', ')}\n  Sectors: ${Object.entries(NORDNET_FUND_DATA[p.ticker].sectors).map(([k,v]) => k + ' ' + v + '%').join(', ')}\n  Geography: ${Object.entries(NORDNET_FUND_DATA[p.ticker].geography).map(([k,v]) => k + ' ' + v + '%').join(', ')}`)
+      .join('\n');
+
     const resp = await fetch('/api/overlap', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ positions: posData }),
+      body: JSON.stringify({ positions: posData, staticFundHints: staticHints }),
     });
     const data = await resp.json();
     if (data.error) throw new Error(data.error);
@@ -152,6 +253,77 @@ async function runOverlapAnalysis() {
     console.error('Overlap analysis error:', err);
     throw err;
   }
+}
+
+// Compute overlap analysis locally using static fund data (no API needed)
+function computeLocalOverlap(positions) {
+  const totalValue = positions.reduce((s, p) => s + posValDKK(p), 0);
+  const holdings = {};
+  const aggregatedSectors = {};
+  const aggregatedGeo = {};
+  const aggregatedTopHoldings = {};
+
+  positions.forEach(p => {
+    const fd = NORDNET_FUND_DATA[p.ticker];
+    if (!fd) return;
+    const weight = totalValue > 0 ? posValDKK(p) / totalValue : 0;
+
+    holdings[p.ticker] = fd;
+
+    // Weighted sector aggregation
+    Object.entries(fd.sectors).forEach(([sector, pct]) => {
+      aggregatedSectors[sector] = (aggregatedSectors[sector] || 0) + pct * weight;
+    });
+
+    // Weighted geo aggregation
+    Object.entries(fd.geography).forEach(([geo, pct]) => {
+      aggregatedGeo[geo] = (aggregatedGeo[geo] || 0) + pct * weight;
+    });
+
+    // Weighted top holdings
+    fd.topHoldings.forEach(h => {
+      const key = h.ticker || h.name;
+      if (!aggregatedTopHoldings[key]) {
+        aggregatedTopHoldings[key] = { name: h.name, ticker: h.ticker, weight: 0 };
+      }
+      aggregatedTopHoldings[key].weight += h.weight * weight;
+    });
+  });
+
+  // Compute overlap matrix based on shared holdings
+  const tickers = positions.map(p => p.ticker);
+  const overlapMatrix = {};
+  for (let i = 0; i < tickers.length; i++) {
+    overlapMatrix[tickers[i]] = {};
+    for (let j = 0; j < tickers.length; j++) {
+      if (i === j) continue;
+      const fd1 = NORDNET_FUND_DATA[tickers[i]];
+      const fd2 = NORDNET_FUND_DATA[tickers[j]];
+      if (!fd1 || !fd2) { overlapMatrix[tickers[i]][tickers[j]] = 0; continue; }
+      // Overlap = sum of min weights for shared holdings
+      let overlap = 0;
+      fd1.topHoldings.forEach(h1 => {
+        const h2 = fd2.topHoldings.find(h => h.ticker === h1.ticker || h.name === h1.name);
+        if (h2) overlap += Math.min(h1.weight, h2.weight);
+      });
+      overlapMatrix[tickers[i]][tickers[j]] = Math.round(overlap * 10) / 10;
+    }
+  }
+
+  const sortedTopHoldings = Object.values(aggregatedTopHoldings)
+    .sort((a, b) => b.weight - a.weight)
+    .map(h => ({ ...h, weight: Math.round(h.weight * 100) / 100 }));
+
+  return {
+    holdings,
+    overlapMatrix,
+    aggregated: {
+      sectors: aggregatedSectors,
+      geo: aggregatedGeo,
+      geography: aggregatedGeo,
+      topHoldings: sortedTopHoldings,
+    },
+  };
 }
 
 function renderOverlapMatrix(data) {

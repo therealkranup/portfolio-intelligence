@@ -177,16 +177,17 @@ app.post("/api/overlap", async (req, res) => {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return res.status(500).json({ error: "OPENROUTER_API_KEY not configured" });
 
-  const { positions } = req.body; // array of { ticker, name, type }
+  const { positions, staticFundHints } = req.body; // array of { ticker, name, type }
   if (!positions || positions.length < 2) {
     return res.status(400).json({ error: "Need at least 2 positions for overlap analysis" });
   }
 
   try {
     const positionList = positions.map(p => `${p.ticker} (${p.name}, type: ${p.type})`).join("\n");
+    const hintsBlock = staticFundHints ? `\n\nPRE-VERIFIED FUND DATA (use this data directly, do NOT guess):\n${staticFundHints}\n` : '';
     const prompt = `You are a financial analyst. Analyze the overlap between these portfolio positions:
 
-${positionList}
+${positionList}${hintsBlock}
 
 For each ETF or fund, identify:
 1. Top 10 underlying holdings with approximate weight percentages
