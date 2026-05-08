@@ -12,5 +12,23 @@
     "express": "^4.18.2"
   },
   "author": "therealkranup",
-  "private": true
+  "private": true,
+  "directories": {
+    "doc": "docs"
+  },
+  "devDependencies": {
+    "@babel/cli": "^7.28.6",
+    "@babel/core": "^7.29.0",
+    "@babel/preset-react": "^7.28.5"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/therealkranup/portfolio-intelligence.git"
+  },
+  "keywords": [],
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/therealkranup/portfolio-intelligence/issues"
+  },
+  "homepage": "https://github.com/therealkranup/portfolio-intelligence#readme"
 }

@@ -264,6 +264,7 @@ function initLanguage() {
       btn.classList.add('active');
       APP_STATE.lang = btn.dataset.lang;
       applyTranslations(APP_STATE.lang);
+      renderAll();
       savePreferences();
     });
   });
@@ -312,6 +313,8 @@ function saveData() {
   try {
     localStorage.setItem('pi-entries', JSON.stringify(APP_STATE.entries));
     localStorage.setItem('pi-positions', JSON.stringify(APP_STATE.positions));
+    if (APP_STATE.overlapData) localStorage.setItem('pi-overlap', JSON.stringify(APP_STATE.overlapData));
+    if (APP_STATE.lastPriceUpdate) localStorage.setItem('pi-last-price-update', APP_STATE.lastPriceUpdate);
   } catch {}
   // TODO: sync to Supabase when connected
 }
@@ -320,8 +323,12 @@ function loadData() {
   try {
     const entries = JSON.parse(localStorage.getItem('pi-entries'));
     const positions = JSON.parse(localStorage.getItem('pi-positions'));
+    const overlap = JSON.parse(localStorage.getItem('pi-overlap'));
+    const lastPrice = localStorage.getItem('pi-last-price-update');
     if (entries) APP_STATE.entries = entries;
     if (positions) APP_STATE.positions = positions;
+    if (overlap) APP_STATE.overlapData = overlap;
+    if (lastPrice) APP_STATE.lastPriceUpdate = lastPrice;
   } catch {}
   // Migrate: backfill broker/accountType for positions added before this field existed
   APP_STATE.positions.forEach(p => {
@@ -872,9 +879,32 @@ function initPhilosophy() {
 
 // ── Render Functions ──
 function renderAll() {
+  syncPortfolioToNetWorth();
   renderNetWorthList();
   renderKPIs();
   renderHoldingsTable();
+  renderBrokerBreakdown();
+
+  // Scoring engine
+  const scoreData = computePortfolioScore();
+  if (scoreData) {
+    renderScoreGauge(scoreData);
+  }
+
+  // Rebalancing engine
+  const suggestions = computeRebalanceSuggestions();
+  renderRebalanceSuggestions(suggestions);
+
+  // Overlap — render cached data if available
+  if (APP_STATE.overlapData) {
+    renderOverlapMatrix(APP_STATE.overlapData);
+    renderSectorChart(APP_STATE.overlapData);
+    renderGeoChart(APP_STATE.overlapData);
+    document.getElementById('overlap-matrix-card').hidden = false;
+    document.getElementById('sector-exposure-card').hidden = false;
+    document.getElementById('geo-exposure-card').hidden = false;
+    document.getElementById('overlap-empty').hidden = true;
+  }
 }
 
 function renderNetWorthList() {
@@ -946,8 +976,9 @@ function renderHoldingsTable() {
     return;
   }
 
-  const brokerLabels = { saxo: 'Saxo', nordnet: 'Nordnet', lunar: 'Lunar', other: 'Anden' };
-  const accountLabels = { ask: 'ASK', free: 'Frit depot', pension: 'Pension', isk: 'ISK', other: 'Anden' };
+  const isEn = APP_STATE.lang === 'en';
+  const brokerLabels = { saxo: 'Saxo', nordnet: 'Nordnet', lunar: 'Lunar', other: isEn ? 'Other' : 'Anden' };
+  const accountLabels = { ask: 'ASK', free: isEn ? 'Free depot' : 'Frit depot', pension: 'Pension', isk: 'ISK', other: isEn ? 'Other' : 'Anden' };
 
   // Sort by broker then account type for visual grouping
   const sorted = [...positions].sort((a, b) => {
@@ -1022,7 +1053,7 @@ function initSettings() {
 
   // Export
   document.getElementById('export-data-btn')?.addEventListener('click', () => {
-    const data = { entries: APP_STATE.entries, positions: APP_STATE.positions };
+    const data = { entries: APP_STATE.entries.filter(e => !e.autoSynced), positions: APP_STATE.positions, overlapData: APP_STATE.overlapData };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1046,6 +1077,7 @@ function initSettings() {
           const data = JSON.parse(reader.result);
           if (data.entries) APP_STATE.entries = data.entries;
           if (data.positions) APP_STATE.positions = data.positions;
+          if (data.overlapData) APP_STATE.overlapData = data.overlapData;
           saveData();
           renderAll();
         } catch (err) {
@@ -1063,6 +1095,76 @@ function escapeHTML(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+// ── Price Refresh ──
+function initPriceRefresh() {
+  const btn = document.getElementById('refresh-prices-btn');
+  if (!btn) return;
+
+  btn.addEventListener('click', async () => {
+    const status = document.getElementById('price-update-status');
+    const isEn = APP_STATE.lang === 'en';
+    status.hidden = false;
+    status.textContent = isEn ? 'Fetching live prices…' : 'Henter live kurser…';
+    btn.disabled = true;
+
+    const result = await fetchLivePrices();
+    btn.disabled = false;
+
+    if (result.error) {
+      status.textContent = `❌ ${result.error}`;
+    } else if (result.updated > 0) {
+      const failMsg = result.failed.length ? ` (${result.failed.join(', ')} ${isEn ? 'not found' : 'ikke fundet'})` : '';
+      status.textContent = `✓ ${result.updated} ${isEn ? 'prices updated' : 'kurser opdateret'}${failMsg}`;
+    } else {
+      status.textContent = isEn ? 'No prices found — tickers may not be on Yahoo Finance' : 'Ingen kurser fundet — tickers er muligvis ikke på Yahoo Finance';
+    }
+
+    setTimeout(() => { status.hidden = true; }, 5000);
+  });
+}
+
+// ── Overlap Analysis Button ──
+function initOverlapAnalysis() {
+  const btn = document.getElementById('run-overlap-btn');
+  if (!btn) return;
+
+  btn.addEventListener('click', async () => {
+    const isEn = APP_STATE.lang === 'en';
+    if (APP_STATE.positions.length < 2) {
+      alert(isEn ? 'Need at least 2 positions for overlap analysis.' : 'Du skal have mindst 2 positioner for overlap-analyse.');
+      return;
+    }
+
+    btn.disabled = true;
+    btn.querySelector('span').textContent = isEn ? 'Analyzing…' : 'Analyserer…';
+
+    try {
+      const data = await runOverlapAnalysis();
+      if (data) {
+        renderOverlapMatrix(data);
+        renderSectorChart(data);
+        renderGeoChart(data);
+        document.getElementById('overlap-matrix-card').hidden = false;
+        document.getElementById('sector-exposure-card').hidden = false;
+        document.getElementById('geo-exposure-card').hidden = false;
+        document.getElementById('overlap-empty').hidden = true;
+
+        // Re-score with overlap data now available
+        const scoreData = computePortfolioScore();
+        if (scoreData) renderScoreGauge(scoreData);
+        const suggestions = computeRebalanceSuggestions();
+        renderRebalanceSuggestions(suggestions);
+      }
+    } catch (err) {
+      alert(`${isEn ? 'Error' : 'Fejl'}: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+      btn.querySelector('span').textContent = isEn ? 'Run analysis' : 'Kør analyse';
+      applyTranslations(APP_STATE.lang);
+    }
+  });
 }
 
 // ── Bootstrap ──
@@ -1084,6 +1186,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initPhilosophy();
   initHoldingsSearch();
   initSettings();
+  initPriceRefresh();
+  initOverlapAnalysis();
 
   // Hide loading, check auth state
   document.getElementById('app-loading').style.display = 'none';

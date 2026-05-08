@@ -18,10 +18,13 @@ const I18N = {
     // Nav
     'nav.overview': 'Overblik',
     'nav.networth': 'Formue',
+    'nav.pension': 'Pension',
+    'nav.mortgage': 'Aktiver & Lån',
     'nav.portfolio': 'Portefølje',
     'nav.overlap': 'Overlap',
     'nav.score': 'Score',
     'nav.rebalance': 'Rebalancering',
+    'nav.huginn': 'Huginn',
     'nav.settings': 'Indstillinger',
     'nav.logout': 'Log ud',
     'nav.more': 'Mere',
@@ -37,6 +40,8 @@ const I18N = {
     'overview.allocationChart': 'Aktivfordeling',
     'overview.projectionChart': 'Formuefremskrivning',
     'overview.alerts': 'Advarsler',
+    'overview.brokerBreakdown': 'Fordeling pr. mægler/konto',
+    'overview.refreshPrices': 'Opdatér kurser',
 
     // Net Worth
     'networth.title': 'Formue',
@@ -136,6 +141,12 @@ const I18N = {
     'modal.scanFormats': 'PDF, PNG, JPG — maks. 10 MB',
     'modal.scanning': 'Analyserer dokument med AI…',
     'modal.applyResults': 'Anvend resultater',
+    'modal.broker': 'Mægler',
+    'modal.accountType': 'Kontotype',
+    'modal.importTitle': 'Importér portefølje',
+    'modal.importFile': 'Vælg fil',
+    'modal.importFormats': 'Understøtter JSON, PDF, JPG, PNG — PDF og billeder scannes med AI',
+    'modal.importBtn': 'Importér',
   },
 
   en: {
@@ -153,10 +164,13 @@ const I18N = {
     // Nav
     'nav.overview': 'Overview',
     'nav.networth': 'Net Worth',
+    'nav.pension': 'Pension',
+    'nav.mortgage': 'Assets',
     'nav.portfolio': 'Portfolio',
     'nav.overlap': 'Overlap',
     'nav.score': 'Score',
     'nav.rebalance': 'Rebalance',
+    'nav.huginn': 'Huginn',
     'nav.settings': 'Settings',
     'nav.logout': 'Log out',
     'nav.more': 'More',
@@ -172,6 +186,8 @@ const I18N = {
     'overview.allocationChart': 'Asset allocation',
     'overview.projectionChart': 'Net worth projection',
     'overview.alerts': 'Alerts',
+    'overview.brokerBreakdown': 'Breakdown by broker/account',
+    'overview.refreshPrices': 'Refresh prices',
 
     // Net Worth
     'networth.title': 'Net Worth',
@@ -271,6 +287,12 @@ const I18N = {
     'modal.scanFormats': 'PDF, PNG, JPG — max 10 MB',
     'modal.scanning': 'Analyzing document with AI…',
     'modal.applyResults': 'Apply results',
+    'modal.broker': 'Broker',
+    'modal.accountType': 'Account type',
+    'modal.importTitle': 'Import portfolio',
+    'modal.importFile': 'Choose file',
+    'modal.importFormats': 'Supports JSON, PDF, JPG, PNG — PDF and images scanned with AI',
+    'modal.importBtn': 'Import',
   }
 };
 
