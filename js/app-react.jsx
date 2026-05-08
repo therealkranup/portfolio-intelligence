@@ -1065,10 +1065,16 @@ const InvestmentsTab = ({ state, refresh, openModal, privacyMode }) => {
           case 'ticker': va = (a.ticker||'').toLowerCase(); vb = (b.ticker||'').toLowerCase(); return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
           case 'shares': va = a.shares||0; vb = b.shares||0; break;
           case 'price': va = toDKK(a.currentPrice||0, a.currency); vb = toDKK(b.currentPrice||0, b.currency); break;
+          case 'avgPrice': va = toDKK(a.avgPrice||0, a.currency); vb = toDKK(b.avgPrice||0, b.currency); break;
+          case 'pnl': {
+            va = (a.avgPrice && a.avgPrice > 0 && a.currentPrice) ? ((a.currentPrice - a.avgPrice) / a.avgPrice * 100) : -9999;
+            vb = (b.avgPrice && b.avgPrice > 0 && b.currentPrice) ? ((b.currentPrice - b.avgPrice) / b.avgPrice * 100) : -9999;
+            break;
+          }
           case 'change': {
-            const ca = (a.avgPrice && a.avgPrice > 0 && a.currentPrice) ? ((a.currentPrice - a.avgPrice) / a.avgPrice * 100) : (a.priceChangePercent || 0);
-            const cb = (b.avgPrice && b.avgPrice > 0 && b.currentPrice) ? ((b.currentPrice - b.avgPrice) / b.avgPrice * 100) : (b.priceChangePercent || 0);
-            va = ca; vb = cb; break;
+            va = a.priceChangePercent || 0;
+            vb = b.priceChangePercent || 0;
+            break;
           }
           case 'weight':
           case 'value': default: va = posVal(a); vb = posVal(b); break;
@@ -1152,7 +1158,9 @@ const InvestmentsTab = ({ state, refresh, openModal, privacyMode }) => {
                 <th>{tl("portfolio.thAccount")}</th>
                 <th className="num" style={{cursor:"pointer", userSelect:"none"}} onClick={()=>handleSort('shares')}>{tl("portfolio.thShares")}{sortArrow('shares')}</th>
                 <th className="num" style={{cursor:"pointer", userSelect:"none"}} onClick={()=>handleSort('price')}>{tl("portfolio.thPrice")}{sortArrow('price')}</th>
-                <th className="num" style={{cursor:"pointer", userSelect:"none"}} onClick={()=>handleSort('change')}>{isEn()?'Change':'AEndring'}{sortArrow('change')}</th>
+                <th className="num" style={{cursor:"pointer", userSelect:"none"}} onClick={()=>handleSort('avgPrice')}>{isEn()?'Avg Price':'GAK'}{sortArrow('avgPrice')}</th>
+                <th className="num" style={{cursor:"pointer", userSelect:"none"}} onClick={()=>handleSort('pnl')}>{isEn()?'P&L %':'Afkast %'}{sortArrow('pnl')}</th>
+                <th className="num" style={{cursor:"pointer", userSelect:"none"}} onClick={()=>handleSort('change')}>{isEn()?'1D %':'1D %'}{sortArrow('change')}</th>
                 <th style={{width:60, textAlign:"center"}}>{isEn()?'5D':'5D'}</th>
                 <th className="num" style={{cursor:"pointer", userSelect:"none"}} onClick={()=>handleSort('value')}>{tl("portfolio.thValue")}{sortArrow('value')}</th>
                 <th className="num" style={{cursor:"pointer", userSelect:"none"}} onClick={()=>handleSort('weight')}>{tl("portfolio.thWeight")}{sortArrow('weight')}</th>
@@ -1161,7 +1169,7 @@ const InvestmentsTab = ({ state, refresh, openModal, privacyMode }) => {
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={11} style={{textAlign:"center", color:"var(--text-dim)", padding:40}}>{tl("portfolio.noHoldings")}</td></tr>
+                <tr><td colSpan={13} style={{textAlign:"center", color:"var(--text-dim)", padding:40}}>{tl("portfolio.noHoldings")}</td></tr>
               ) : filtered.map((h, idx) => {
                 const rawValue = (h.shares||0) * (h.currentPrice||0);
                 const value = toDKK(rawValue, h.currency);
@@ -1191,25 +1199,45 @@ const InvestmentsTab = ({ state, refresh, openModal, privacyMode }) => {
                       )}
                     </td>
                     <td className="num">
+                      {h.avgPrice && h.avgPrice > 0 ? (
+                        h.currency && h.currency !== (APP_STATE.currency || 'DKK') ? (
+                          <>
+                            <div style={{fontFamily:"var(--font-mono)", fontSize:12.5}}>{h.currency === 'USD' ? '$' : h.currency === 'EUR' ? '€' : h.currency === 'GBP' ? '£' : ''}{h.avgPrice.toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:2})}</div>
+                            <div style={{fontSize:9, color:"var(--text-muted)", fontFamily:"var(--font-mono)", marginTop:1}}>{fmtC(toDKK(h.avgPrice, h.currency))}</div>
+                          </>
+                        ) : (
+                          <div style={{fontFamily:"var(--font-mono)", fontSize:12.5}}>{fmtC(h.avgPrice)}</div>
+                        )
+                      ) : <span style={{color:"var(--text-dim)", fontSize:11}}>&mdash;</span>}
+                    </td>
+                    <td className="num">
                       {(() => {
-                        const daily = h.priceChangePercent;
                         const pnl = (h.avgPrice && h.avgPrice > 0 && h.currentPrice)
                           ? ((h.currentPrice - h.avgPrice) / h.avgPrice * 100) : null;
-                        const val = daily != null ? daily : pnl;
-                        const label = daily != null ? 'day' : (pnl != null ? 'total' : null);
-                        if (val == null) return <span style={{color:"var(--text-dim)", fontSize:11}}>&mdash;</span>;
+                        if (pnl == null) return <span style={{color:"var(--text-dim)", fontSize:11}}>&mdash;</span>;
                         return (
-                          <div style={{display:"flex", flexDirection:"column", alignItems:"flex-end", gap:1}}>
-                            <span style={{
-                              color: val > 0 ? "var(--pos)" : val < 0 ? "var(--neg)" : "var(--text-muted)",
-                              fontFamily:"var(--font-mono)", fontSize:12, fontWeight:500,
-                              padding:"2px 6px", borderRadius:6,
-                              background: val > 0 ? "oklch(0.45 0.12 145 / 0.12)" : val < 0 ? "oklch(0.55 0.15 25 / 0.12)" : "transparent",
-                            }}>
-                              {val > 0 ? "+" : ""}{val.toFixed(2)}%
-                            </span>
-                            {label && <span style={{fontSize:9, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.05em"}}>{label}</span>}
-                          </div>
+                          <span style={{
+                            color: pnl > 0 ? "var(--pos)" : pnl < 0 ? "var(--neg)" : "var(--text-muted)",
+                            fontFamily:"var(--font-mono)", fontSize:12, fontWeight:600,
+                            padding:"2px 6px", borderRadius:6,
+                            background: pnl > 0 ? "oklch(0.45 0.12 145 / 0.12)" : pnl < 0 ? "oklch(0.55 0.15 25 / 0.12)" : "transparent",
+                          }}>
+                            {pnl > 0 ? "+" : ""}{pnl.toFixed(2)}%
+                          </span>
+                        );
+                      })()}
+                    </td>
+                    <td className="num">
+                      {(() => {
+                        const daily = h.priceChangePercent;
+                        if (daily == null) return <span style={{color:"var(--text-dim)", fontSize:11}}>&mdash;</span>;
+                        return (
+                          <span style={{
+                            color: daily > 0 ? "var(--pos)" : daily < 0 ? "var(--neg)" : "var(--text-muted)",
+                            fontFamily:"var(--font-mono)", fontSize:11.5, fontWeight:500,
+                          }}>
+                            {daily > 0 ? "+" : ""}{daily.toFixed(2)}%
+                          </span>
                         );
                       })()}
                     </td>
