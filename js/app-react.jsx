@@ -1200,7 +1200,7 @@ const InvestmentsTab = ({ state, refresh, openModal, privacyMode }) => {
       <div className="grid grid-12" style={{marginBottom:20}}>
         <div className="card col-4 stat">
           <div className="eyebrow">{tl("portfolio.totalValue")}</div>
-          <div className="value">{fmtC(totalValue)}</div>
+          <div className={`value${privacyMode ? ' sensitive' : ''}`}>{fmtC(totalValue)}</div>
         </div>
         <div className="card col-4 stat">
           <div className="eyebrow">{tl("portfolio.positions")}</div>
@@ -1298,8 +1298,8 @@ const InvestmentsTab = ({ state, refresh, openModal, privacyMode }) => {
                         </div>
                       ) : `${broker} · ${acct}`}
                     </td>
-                    <td className="num">{h.shares}</td>
-                    <td className="num">
+                    <td className={`num${privacyMode ? ' sensitive' : ''}`}>{h.shares}</td>
+                    <td className={`num${privacyMode ? ' sensitive' : ''}`}>
                       {h.currency && h.currency !== (APP_STATE.currency || 'DKK') ? (
                         <>
                           <div style={{fontFamily:"var(--font-mono)", fontSize:12.5}}>{h.currency === 'USD' ? '$' : h.currency === 'EUR' ? '?' : h.currency === 'GBP' ? '?' : ''}{(h.currentPrice||0).toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:2})}</div>
@@ -1309,7 +1309,7 @@ const InvestmentsTab = ({ state, refresh, openModal, privacyMode }) => {
                         <div>{fmtC(h.currentPrice||0)}</div>
                       )}
                     </td>
-                    <td className="num">
+                    <td className={`num${privacyMode ? ' sensitive' : ''}`}>
                       {h.avgPrice && h.avgPrice > 0 ? (
                         h.currency && h.currency !== (APP_STATE.currency || 'DKK') ? (
                           <>
@@ -1359,7 +1359,7 @@ const InvestmentsTab = ({ state, refresh, openModal, privacyMode }) => {
                         } />
                       ) : <span style={{display:"block", width:56, height:20}} />}
                     </td>
-                    <td className="num" style={{fontWeight:500}}>{fmtC(value)}</td>
+                    <td className={`num${privacyMode ? ' sensitive' : ''}`} style={{fontWeight:500}}>{fmtC(value)}</td>
                     <td className="num">
                       <div style={{display:"flex", alignItems:"center", gap:8, justifyContent:"flex-end"}}>
                         <div style={{width:40, height:5, background:"var(--bg-sunk)", borderRadius:999, overflow:"hidden"}}>
@@ -1585,7 +1585,7 @@ const PensionTab = ({ state, refresh, openModal, activeMember, privacyMode }) =>
       <div className="grid grid-12" style={{marginBottom: 24}}>
         <div className="card col-3 stat">
           <div className="eyebrow">{isEn() ? 'Current pension' : 'Nuvaerende pension'}</div>
-          <div className="value" style={{fontSize: 28}}>{fmtC(totalCurrentPension)}</div>
+          <div className={`value${privacyMode ? ' sensitive' : ''}`} style={{fontSize: 28}}>{fmtC(totalCurrentPension)}</div>
           <div style={{fontSize: 11, color: "var(--text-dim)", marginTop: 4}}>
             {totalCurrentPension > 0 ? (isEn() ? 'starting balance' : 'startsaldo') : (isEn() ? 'set below' : 'indstil nedenfor')}
           </div>
@@ -1858,7 +1858,7 @@ const PensionTab = ({ state, refresh, openModal, activeMember, privacyMode }) =>
                   <div className="line-name">{e.name || (isEn() ? 'Pension account' : 'Pensionskonto')}</div>
                   <div className="line-sub">{e.provider || e.category}</div>
                 </div>
-                <div className="line-val" style={{marginRight: 8}}>{fmtC(e.amount)}</div>
+                <div className={`line-val${privacyMode ? ' sensitive' : ''}`} style={{marginRight: 8}}>{fmtC(e.amount)}</div>
                 <div style={{display: "flex", gap: 2}}>
                   <button className="icon-btn" style={{width: 28, height: 28}} onClick={() => openModal('entry', e)}><Icon name="edit" size={13}/></button>
                   <button className="icon-btn" style={{width: 28, height: 28}} onClick={() => {
