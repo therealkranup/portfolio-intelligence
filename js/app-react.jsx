@@ -3542,9 +3542,7 @@ function App() {
     }
   }, [household, activeMember]);
 
-  if (!authed) return <AuthScreen onLogin={handleLogin}/>;
-
-  // Create filtered state based on active member
+  // Create filtered state based on active member (must be before early return to keep hook order stable)
   const safeActiveMember = (activeMember !== 'me' && activeMember !== 'household' && !household.find(m => m.id === activeMember)) ? 'me' : activeMember;
 
   const filteredState = useMemo(() => {
@@ -3560,6 +3558,8 @@ function App() {
       positions: filterByOwner(state.positions),
     };
   }, [state, state.entries, state.positions, safeActiveMember, tick]);
+
+  if (!authed) return <AuthScreen onLogin={handleLogin}/>;
 
   const currentNav = NAV.find(n => n.id === route) || NAV[0];
   const positions = filteredState.positions || [];
