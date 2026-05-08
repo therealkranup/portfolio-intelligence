@@ -3865,14 +3865,15 @@ function App() {
 
         <div className="side-footer">
           <div className="account-chip">
-            <div className="avatar">{(state.user?.email||'D').charAt(0).toUpperCase()}</div>
+            <div className="avatar" style={{background:"var(--accent)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center"}}>
+              <Icon name="cloud-off" size={14}/>
+            </div>
             <div className="account-chip-info">
-              <div className="name">{state.user?.email||'demo@portfolio.dk'}</div>
+              <div className="name" style={{fontSize:12}}>{isEn() ? 'Local mode' : 'Lokal tilstand'}</div>
               <div className="plan">
-                <button style={{background:"none", border:"none", color:"var(--text-dim)", fontSize:11, cursor:"pointer", padding:0}}
-                  onClick={()=>{APP_STATE.user=null; APP_STATE.demoMode=false; setAuthed(false);}}>
-                  {tl("nav.logout")}
-                </button>
+                <span style={{color:"var(--text-dim)", fontSize:11, opacity:0.7}}>
+                  {isEn() ? 'Data on this device only' : 'Data kun på denne enhed'}
+                </span>
               </div>
             </div>
           </div>
