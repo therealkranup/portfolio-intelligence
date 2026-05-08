@@ -368,7 +368,17 @@ const Overview = ({ state, refresh, activeMember, privacyMode, navigateTo, sendQ
 
   // ── EMPTY-STATE: matches Overview dashboard card grid ──
   if (hasNoData) {
-    const emptyVal = (text) => <span style={{color:"var(--text-dim)", fontFamily:"var(--font-display)", fontSize:28}}>—</span>;
+    // Pictogram icons from the Scandinavian design
+    const svgProps = {fill:'none', stroke:'currentColor', strokeWidth:1.2, strokeLinecap:'round', strokeLinejoin:'round', viewBox:'0 0 24 24', width:28, height:28};
+    const Pictograms = {
+      investments: <svg {...svgProps}><path d="M3 18 L9 11 L13 14 L21 5"/><path d="M16 5 L21 5 L21 10"/></svg>,
+      cash:        <svg {...svgProps}><rect x="3" y="7" width="18" height="12" rx="1.5"/><circle cx="12" cy="13" r="2.5"/></svg>,
+      pension:     <svg {...svgProps}><path d="M12 3 L20 7 V12 C20 16.5 16.5 19.5 12 21 C7.5 19.5 4 16.5 4 12 V7 Z"/></svg>,
+      property:    <svg {...svgProps}><path d="M3 11 L12 4 L21 11"/><path d="M5 10 V20 H19 V10"/></svg>,
+      liabilities: <svg {...svgProps}><path d="M5 4 H15 L19 8 V20 H5 Z"/><path d="M15 4 V8 H19"/><path d="M9 13 H15"/></svg>,
+      ai:          <svg {...svgProps}><path d="M12 3 V5"/><path d="M12 19 V21"/><path d="M5 12 H3"/><path d="M21 12 H19"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/></svg>,
+    };
+
     const addBtn = (label, onClick) => (
       <button className="btn btn-sm" onClick={e => { e.stopPropagation(); onClick(); }} style={{fontSize:11, padding:"4px 10px"}}>
         <Icon name="plus" size={12} style={{marginRight:3}}/> {label}
@@ -392,14 +402,20 @@ const Overview = ({ state, refresh, activeMember, privacyMode, navigateTo, sendQ
         {/* Row 1: Net Worth, Investments, Portfolio Score */}
         <div className="grid grid-12" style={{marginBottom:16}}>
           <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => openModal && openModal('entry', { type: 'asset' })}>
-            <div className="eyebrow">{isEn() ? 'Net Worth' : 'Formue'}</div>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start"}}>
+              <div className="eyebrow">{isEn() ? 'Net Worth' : 'Formue'}</div>
+              <span style={{color:"var(--text-dim)", opacity:0.5}}>{Pictograms.investments}</span>
+            </div>
             <div className="value" style={{fontSize:32, color:"var(--text-dim)"}}>—</div>
             <div style={{marginTop:12, display:"flex", gap:6}}>
               {addBtn(isEn() ? 'Add manually' : 'Tilføj manuelt', () => openModal && openModal('entry', { type: 'asset' }))}
             </div>
           </div>
           <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => navigateTo && navigateTo('import')}>
-            <div className="eyebrow"><Icon name="trending-up" size={12} style={{marginRight:4, opacity:0.5}}/>{isEn() ? 'Investments' : 'Investeringer'}</div>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start"}}>
+              <div className="eyebrow">{isEn() ? 'Investments' : 'Investeringer'}</div>
+              <span style={{color:"var(--text-dim)", opacity:0.5}}>{Pictograms.investments}</span>
+            </div>
             <div className="value" style={{fontSize:32, color:"var(--text-dim)"}}>—</div>
             <div style={{marginTop:8, fontSize:12, color:"var(--text-dim)"}}>{isEn() ? 'Saxo, Nordnet, or manual' : 'Saxo, Nordnet eller manuelt'}</div>
             <div style={{marginTop:10, display:"flex", gap:6}}>
@@ -423,7 +439,10 @@ const Overview = ({ state, refresh, activeMember, privacyMode, navigateTo, sendQ
         {/* Row 2: Pension, Home Equity, Cash & Savings */}
         <div className="grid grid-12" style={{marginBottom:16}}>
           <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => openModal && openModal('entry', { type: 'asset', category: 'pension' })}>
-            <div className="eyebrow"><Icon name="trending-up" size={12} style={{marginRight:4, opacity:0.5}}/>{isEn() ? 'Pension' : 'Pension'}</div>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start"}}>
+              <div className="eyebrow">{isEn() ? 'Pension' : 'Pension'}</div>
+              <span style={{color:"var(--text-dim)", opacity:0.5}}>{Pictograms.pension}</span>
+            </div>
             <div className="value" style={{fontSize:28, color:"var(--text-dim)"}}>—</div>
             <div style={{marginTop:8, fontSize:12, color:"var(--text-dim)"}}>{isEn() ? 'Employer, private, ATP' : 'Arbejdsgiver, privat, ATP'}</div>
             <div style={{marginTop:10}}>
@@ -431,7 +450,10 @@ const Overview = ({ state, refresh, activeMember, privacyMode, navigateTo, sendQ
             </div>
           </div>
           <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => openModal && openModal('entry', { type: 'asset', category: 'property' })}>
-            <div className="eyebrow"><Icon name="home" size={12} style={{marginRight:4, opacity:0.5}}/>{isEn() ? 'Home Equity' : 'Friværdi'}</div>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start"}}>
+              <div className="eyebrow">{isEn() ? 'Home Equity' : 'Friværdi'}</div>
+              <span style={{color:"var(--text-dim)", opacity:0.5}}>{Pictograms.property}</span>
+            </div>
             <div className="value" style={{fontSize:28, color:"var(--text-dim)"}}>—</div>
             <div style={{marginTop:8, fontSize:12, color:"var(--text-dim)"}}>{isEn() ? 'Property value & mortgage' : 'Boligværdi & realkreditlån'}</div>
             <div style={{marginTop:10}}>
@@ -439,7 +461,10 @@ const Overview = ({ state, refresh, activeMember, privacyMode, navigateTo, sendQ
             </div>
           </div>
           <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => openModal && openModal('entry', { type: 'asset', category: 'cash' })}>
-            <div className="eyebrow"><Icon name="dollar" size={12} style={{marginRight:4, opacity:0.5}}/>{isEn() ? 'Cash & Savings' : 'Kontanter & Opsparing'}</div>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start"}}>
+              <div className="eyebrow">{isEn() ? 'Cash & Savings' : 'Kontanter & Opsparing'}</div>
+              <span style={{color:"var(--text-dim)", opacity:0.5}}>{Pictograms.cash}</span>
+            </div>
             <div className="value" style={{fontSize:28, color:"var(--text-dim)"}}>—</div>
             <div style={{marginTop:8, fontSize:12, color:"var(--text-dim)"}}>{isEn() ? 'Bank accounts, savings' : 'Bankkonti, opsparing'}</div>
             <div style={{marginTop:10}}>
@@ -451,7 +476,10 @@ const Overview = ({ state, refresh, activeMember, privacyMode, navigateTo, sendQ
         {/* Row 3: Liabilities + Huginn */}
         <div className="grid grid-12">
           <div className="card col-4 stat" style={{cursor:"pointer"}} onClick={() => openModal && openModal('entry', { type: 'liability' })}>
-            <div className="eyebrow"><Icon name="credit-card" size={12} style={{marginRight:4, opacity:0.5}}/>{isEn() ? 'Liabilities' : 'Gæld'}</div>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start"}}>
+              <div className="eyebrow">{isEn() ? 'Liabilities' : 'Gæld'}</div>
+              <span style={{color:"var(--text-dim)", opacity:0.5}}>{Pictograms.liabilities}</span>
+            </div>
             <div className="value" style={{fontSize:28, color:"var(--text-dim)"}}>—</div>
             <div style={{marginTop:8, fontSize:12, color:"var(--text-dim)"}}>{isEn() ? 'Loans, credit cards, debt' : 'Lån, kreditkort, gæld'}</div>
             <div style={{marginTop:10}}>
@@ -460,14 +488,17 @@ const Overview = ({ state, refresh, activeMember, privacyMode, navigateTo, sendQ
           </div>
           <div className="card col-8 stat" style={{cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"space-between"}} onClick={() => navigateTo && navigateTo('huginn')}>
             <div>
-              <div className="eyebrow"><Icon name="message" size={12} style={{marginRight:4, opacity:0.5}}/>{isEn() ? 'Huginn AI' : 'Huginn AI'}</div>
+              <div className="eyebrow">{isEn() ? 'Huginn AI' : 'Huginn AI'}</div>
               <div style={{fontSize:14, color:"var(--text-muted)", marginTop:6, lineHeight:1.5}}>
                 {isEn() ? 'Ask anything about your finances — or just start a conversation' : 'Spørg om hvad som helst om din økonomi — eller start en samtale'}
               </div>
             </div>
-            <button className="btn" onClick={e => { e.stopPropagation(); navigateTo && navigateTo('huginn'); }}>
-              <Icon name="message" size={14} style={{marginRight:4}}/> {isEn() ? 'Chat' : 'Chat'}
-            </button>
+            <div style={{display:"flex", alignItems:"center", gap:16}}>
+              <span style={{color:"var(--text-dim)", opacity:0.5}}>{Pictograms.ai}</span>
+              <button className="btn" onClick={e => { e.stopPropagation(); navigateTo && navigateTo('huginn'); }}>
+                {isEn() ? 'Chat' : 'Chat'} <span style={{marginLeft:4}}>→</span>
+              </button>
+            </div>
           </div>
         </div>
 
