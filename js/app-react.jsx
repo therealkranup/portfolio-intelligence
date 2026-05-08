@@ -141,7 +141,7 @@ const AuthScreen = ({ onLogin }) => {
 // ==========================================================================
 // OVERVIEW
 // ==========================================================================
-const Overview = ({ state, refresh, activeMember, privacyMode, navigateTo, sendQuickAsk }) => {
+const Overview = ({ state, refresh, activeMember, privacyMode, navigateTo, sendQuickAsk, openModal }) => {
   const entries = state.entries || [];
   const positions = state.positions || [];
 
@@ -366,34 +366,99 @@ const Overview = ({ state, refresh, activeMember, privacyMode, navigateTo, sendQ
   // Rebalance done state (for health section)
   const [rebalDone, setRebalDone] = useState({});
 
-  // ── ONBOARDING STATE ──
+  // ── EMPTY-STATE: flexible entry points ──
   if (hasNoData) {
+    const quickStartCards = [
+      {
+        icon: "trending-up",
+        title: isEn() ? "Investments" : "Investeringer",
+        desc: isEn() ? "Import from Saxo, Nordnet, or add stocks & ETFs manually" : "Importer fra Saxo, Nordnet, eller tilføj aktier & ETF'er manuelt",
+        accent: "#4285F4",
+        action: () => navigateTo && navigateTo('import'),
+        actionLabel: isEn() ? "Import" : "Importer",
+        altAction: () => navigateTo && navigateTo('add-position'),
+        altLabel: isEn() ? "Add manually" : "Tilføj manuelt",
+      },
+      {
+        icon: "wallet",
+        title: isEn() ? "Cash & Savings" : "Kontanter & Opsparing",
+        desc: isEn() ? "Bank accounts, savings, emergency fund" : "Bankkonti, opsparing, nødopsparing",
+        accent: "#16a34a",
+        action: () => openModal && openModal('entry', { type: 'asset', category: 'cash' }),
+        actionLabel: isEn() ? "Add" : "Tilføj",
+      },
+      {
+        icon: "shield",
+        title: isEn() ? "Pension" : "Pension",
+        desc: isEn() ? "Employer pension, private savings, ATP" : "Arbejdsgiver pension, privat opsparing, ATP",
+        accent: "#7c3aed",
+        action: () => openModal && openModal('entry', { type: 'asset', category: 'pension' }),
+        actionLabel: isEn() ? "Add" : "Tilføj",
+      },
+      {
+        icon: "home",
+        title: isEn() ? "Property" : "Ejendom",
+        desc: isEn() ? "Home value, rental property, mortgage" : "Boligværdi, udlejningsejendom, realkreditlån",
+        accent: "#f59e0b",
+        action: () => openModal && openModal('entry', { type: 'asset', category: 'property' }),
+        actionLabel: isEn() ? "Add" : "Tilføj",
+      },
+      {
+        icon: "credit-card",
+        title: isEn() ? "Liabilities" : "Gæld",
+        desc: isEn() ? "Mortgage, car loan, student debt, credit cards" : "Realkreditlån, billån, studiegæld, kreditkort",
+        accent: "#dc2626",
+        action: () => openModal && openModal('entry', { type: 'liability' }),
+        actionLabel: isEn() ? "Add" : "Tilføj",
+      },
+      {
+        icon: "message",
+        title: isEn() ? "Ask Huginn" : "Spørg Huginn",
+        desc: isEn() ? "Get AI help — ask anything about your finances" : "Få AI-hjælp — spørg om hvad som helst om din økonomi",
+        accent: "var(--accent)",
+        action: () => navigateTo && navigateTo('huginn'),
+        actionLabel: isEn() ? "Chat" : "Chat",
+      },
+    ];
+
     return (
       <div className="screen active">
         <div className="page-head">
           <div>
             <h1 className="page-title">{isEn() ? <>Welcome to <em>Portfolio Intelligence</em></> : <>Velkommen til <em>Portfolio Intelligence</em></>}</h1>
-            <p className="page-subtitle">{isEn() ? 'Let\'s get your portfolio set up' : 'Lad os komme i gang med din portefolje'}</p>
+            <p className="page-subtitle">{isEn() ? 'Start anywhere — add what matters to you first' : 'Start hvor som helst — tilføj det der er vigtigt for dig'}</p>
           </div>
         </div>
 
-        <div className="card" style={{textAlign:"center", padding:"48px 32px", maxWidth:560, margin:"40px auto"}}>
-          <div style={{width:72, height:72, borderRadius:20, background:"var(--accent)", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 20px", opacity:0.9}}>
-            <Icon name="upload" size={32} style={{color:"#fff"}}/>
-          </div>
-          <h2 style={{fontFamily:"var(--font-display)", fontSize:24, margin:"0 0 10px"}}>{isEn() ? 'Get started' : 'Kom i gang'}</h2>
-          <p style={{color:"var(--text-muted)", fontSize:14, lineHeight:1.6, maxWidth:380, margin:"0 auto 24px"}}>
-            {isEn() ? 'Import your portfolio from Saxo, Nordnet, or any broker. Upload a screenshot, PDF, or JSON file and our AI will parse your positions.' : 'Importer din portefolje fra Saxo, Nordnet eller en anden magler. Upload et skærmbillede, PDF eller JSON-fil, og vores AI parser dine positioner.'}
-          </p>
-          <button className="btn btn-primary" style={{fontSize:16, padding:"12px 32px"}} onClick={() => navigateTo && navigateTo('import')}>
-            <Icon name="upload" size={16}/> {isEn() ? 'Import your portfolio' : 'Importer din portefolje'}
-          </button>
-          <div style={{marginTop:16}}>
-            <button className="btn btn-ghost" onClick={() => navigateTo && navigateTo('add-position')}>
-              {isEn() ? 'Or add manually' : 'Eller tilføj manuelt'}
-            </button>
-          </div>
+        <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(240px, 1fr))", gap:12, padding:"24px 0", maxWidth:720, margin:"0 auto"}}>
+          {quickStartCards.map((card, i) => (
+            <div key={i} className="card" style={{padding:"20px", cursor:"pointer", transition:"transform 0.15s, box-shadow 0.15s"}}
+              onClick={card.action}
+              onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 8px 24px rgba(0,0,0,0.15)"; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = ""; e.currentTarget.style.boxShadow = ""; }}
+            >
+              <div style={{width:40, height:40, borderRadius:12, background:card.accent, opacity:0.9, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:12}}>
+                <Icon name={card.icon} size={20} style={{color:"#fff"}}/>
+              </div>
+              <h3 style={{fontFamily:"var(--font-display)", fontSize:16, margin:"0 0 6px"}}>{card.title}</h3>
+              <p style={{color:"var(--text-muted)", fontSize:13, lineHeight:1.5, margin:"0 0 14px"}}>{card.desc}</p>
+              <div style={{display:"flex", gap:8, alignItems:"center"}}>
+                <button className="btn btn-sm btn-accent" onClick={e => { e.stopPropagation(); card.action(); }}>
+                  {card.actionLabel}
+                </button>
+                {card.altAction && (
+                  <button className="btn btn-sm btn-ghost" onClick={e => { e.stopPropagation(); card.altAction(); }}>
+                    {card.altLabel}
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
+
+        <p style={{textAlign:"center", color:"var(--text-muted)", fontSize:12, marginTop:8, opacity:0.7}}>
+          {isEn() ? 'Your data stays on this device — no account needed' : 'Dine data forbliver på denne enhed — ingen konto nødvendig'}
+        </p>
       </div>
     );
   }
@@ -3600,22 +3665,16 @@ IMPORTANT: Always include "value" (total market value of the position) AND "curr
 // ==========================================================================
 function App() {
   const { state, refresh, tick } = useAppState();
+  // Local-first: always auto-initialize, no login gate
   const [authed, setAuthed] = useState(() => {
-    // Auto-login if user has saved data (avoid login screen on refresh)
+    APP_STATE.user = { email: "local@portfolio.dk", id: "local-user" };
+    APP_STATE.demoMode = true;
     try {
-      const savedPositions = localStorage.getItem('pi-positions');
-      const savedEntries = localStorage.getItem('pi-entries');
-      const savedPrefs = localStorage.getItem('pi-prefs');
-      if (savedPositions || savedEntries || savedPrefs) {
-        APP_STATE.user = { email: "demo@portfolio.dk", id: "demo-returning" };
-        APP_STATE.demoMode = true;
-        window.loadData();
-        if (window.fetchFxRates) fetchFxRates().catch(() => {});
-        if (window.syncPortfolioToNetWorth) syncPortfolioToNetWorth();
-        return true;
-      }
+      window.loadData();
+      if (window.fetchFxRates) fetchFxRates().catch(() => {});
+      if (window.syncPortfolioToNetWorth) syncPortfolioToNetWorth();
     } catch {}
-    return false;
+    return true;
   });
   const [route, setRoute] = useState("overview");
   const [theme, setThemeState] = useState(state.theme || "light");
@@ -3734,7 +3793,7 @@ function App() {
     };
   }, [state, state.entries, state.positions, safeActiveMember, tick]);
 
-  if (!authed) return <AuthScreen onLogin={handleLogin}/>;
+  // Auth gate removed — local-first, always authed
 
   const currentNav = NAV.find(n => n.id === route) || NAV[0];
   const positions = filteredState.positions || [];
@@ -3857,7 +3916,7 @@ function App() {
 
         <div className={`content${privacyMode ? ' privacy-mode' : ''}`}>
           {route === 'overview' && (
-            <Overview key={safeActiveMember + '-overview'} state={filteredState} refresh={refresh} activeMember={activeMember} privacyMode={privacyMode} navigateTo={navigateTo} sendQuickAsk={sendQuickAsk} />
+            <Overview key={safeActiveMember + '-overview'} state={filteredState} refresh={refresh} activeMember={activeMember} privacyMode={privacyMode} navigateTo={navigateTo} sendQuickAsk={sendQuickAsk} openModal={openModal} />
           )}
           {route === 'accounts' && (
             <AccountsScreen key={safeActiveMember + '-accounts'} state={filteredState} refresh={refresh} openModal={openModal} privacyMode={privacyMode} household={household} activeMember={activeMember} initialTab={accountsTab} />
