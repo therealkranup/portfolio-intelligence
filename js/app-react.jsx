@@ -162,8 +162,9 @@ const Overview = ({ state, refresh, activeMember, privacyMode, navigateTo, sendQ
   const propertySplit = useMemo(() => {
     try { return JSON.parse(localStorage.getItem('pi-property-split')) || { me: 50 }; } catch { return { me: 50 }; }
   }, []);
-  const hasPartnerMember = loadHousehold().some(m => m.relation === 'partner');
-  const partnerMember = loadHousehold().find(m => m.relation === 'partner');
+  const isPartnerRel = (r) => r === 'partner' || r === 'spouse';
+  const hasPartnerMember = loadHousehold().some(m => isPartnerRel(m.relation));
+  const partnerMember = loadHousehold().find(m => isPartnerRel(m.relation));
   const propSplitPct = useMemo(() => {
     if (!hasPartnerMember) return 100;
     if (isHouseholdView) return 100;
@@ -1979,6 +1980,8 @@ const PensionTab = ({ state, refresh, openModal, activeMember, privacyMode }) =>
 
 // -- Property Tab (from MortgageScreen) --
 const PropertyTab = ({ state, refresh, openModal, household, activeMember, privacyMode }) => {
+  // Property/mortgage are shared household assets — always read from raw state
+  const allEntries = window.APP_STATE?.entries || [];
   const entries = state.entries || [];
 
   const assetCategories = {
@@ -1994,15 +1997,45 @@ const PropertyTab = ({ state, refresh, openModal, household, activeMember, priva
     other_liability:{ icon: "briefcase", en: "Other loans",    da: "Anden gaeld",     color: "oklch(0.55 0.10 200)" },
   };
 
-  const bigAssets = entries.filter(e => e.type === 'asset' && assetCategories[e.category]);
-  const allLoans = entries.filter(e => e.type === 'liability');
+  const isHouseholdView = activeMember === 'household';
+  const isPartnerRelation = (r) => r === 'partner' || r === 'spouse';
+  const hasPartnerMember = (household || []).some(m => isPartnerRelation(m.relation));
+  const partnerMember = (household || []).find(m => isPartnerRelation(m.relation));
 
-  const totalBigAssets = bigAssets.reduce((s, e) => s + (e.amount || 0), 0);
-  const totalLoans = allLoans.reduce((s, e) => s + (e.amount || 0), 0);
+  // Shared asset categories use raw entries + ownership split
+  const sharedCategories = ['property', 'mortgage'];
+  const rawBigAssets = allEntries.filter(e => e.type === 'asset' && assetCategories[e.category] && sharedCategories.includes(e.category));
+  const ownedBigAssets = entries.filter(e => e.type === 'asset' && assetCategories[e.category] && !sharedCategories.includes(e.category));
+  const rawLoans = allEntries.filter(e => e.type === 'liability' && sharedCategories.includes(e.category));
+  const ownedLoans = entries.filter(e => e.type === 'liability' && !sharedCategories.includes(e.category));
+
+  const propertyValueRaw = allEntries.filter(e => e.category === 'property').reduce((s, e) => s + (e.amount || 0), 0);
+  const mortgageBalanceRaw = allEntries.filter(e => e.category === 'mortgage').reduce((s, e) => s + (e.amount || 0), 0);
+
+  // Apply ownership split per member (same logic as Overview)
+  const propertySplitData = useMemo(() => {
+    try { return JSON.parse(localStorage.getItem('pi-property-split')) || { me: 50 }; } catch { return { me: 50 }; }
+  }, []);
+  const propSplitPct = useMemo(() => {
+    if (!hasPartnerMember) return 100;
+    if (isHouseholdView) return 100;
+    if (activeMember === 'me' || !activeMember) return propertySplitData.me ?? 50;
+    if (partnerMember && activeMember === partnerMember.id) return 100 - (propertySplitData.me ?? 50);
+    return 0;
+  }, [activeMember, isHouseholdView, hasPartnerMember, propertySplitData]);
+
+  const totalSharedAssets = rawBigAssets.reduce((s, e) => s + (e.amount || 0), 0) * propSplitPct / 100;
+  const totalOwnedAssets = ownedBigAssets.reduce((s, e) => s + (e.amount || 0), 0);
+  const totalBigAssets = totalSharedAssets + totalOwnedAssets;
+  const totalSharedLoans = rawLoans.reduce((s, e) => s + (e.amount || 0), 0) * propSplitPct / 100;
+  const totalOwnedLoans = ownedLoans.reduce((s, e) => s + (e.amount || 0), 0);
+  const totalLoans = totalSharedLoans + totalOwnedLoans;
   const netPosition = totalBigAssets - totalLoans;
+  const bigAssets = [...rawBigAssets, ...ownedBigAssets];
+  const allLoans = [...rawLoans, ...ownedLoans];
 
-  const propertyValue = entries.filter(e => e.category === 'property').reduce((s, e) => s + (e.amount || 0), 0);
-  const mortgageBalance = entries.filter(e => e.category === 'mortgage').reduce((s, e) => s + (e.amount || 0), 0);
+  const propertyValue = propertyValueRaw * propSplitPct / 100;
+  const mortgageBalance = mortgageBalanceRaw * propSplitPct / 100;
 
   const defaults = { rate: 3.5, payment: 8000, years: 25 };
   const [config, setConfig] = useState(() => {
@@ -2014,8 +2047,8 @@ const PropertyTab = ({ state, refresh, openModal, household, activeMember, priva
     try { localStorage.setItem('pi-mortgage-config', JSON.stringify(next)); } catch {}
   };
 
-  const hasPartner = (household || []).some(m => m.relation === 'partner');
-  const partner = (household || []).find(m => m.relation === 'partner');
+  const hasPartner = hasPartnerMember;
+  const partner = partnerMember;
   const [ownershipSplit, setOwnershipSplit] = useState(() => {
     try { return JSON.parse(localStorage.getItem('pi-property-split')) || { me: 50 }; } catch { return { me: 50 }; }
   });
@@ -3026,7 +3059,7 @@ const SettingsScreen = ({ state, refresh, theme, setTheme, lang, setLang, househ
             <Icon name={m.relation === 'child' ? 'baby' : 'user'} size={16}/>
             <span style={{flex:1, fontWeight:500}}>{m.name}</span>
             <span style={{color:"var(--text-dim)", fontSize:12}}>
-              {m.relation === 'partner' ? (isEn() ? 'Partner' : 'Partner') : (isEn() ? 'Child' : 'Barn')}
+              {(m.relation === 'partner' || m.relation === 'spouse') ? (isEn() ? 'Partner' : 'Partner') : (isEn() ? 'Child' : 'Barn')}
               {m.dob ? ` · ${m.dob}` : ''}
             </span>
             <button className="icon-btn" onClick={() => {
@@ -3046,7 +3079,7 @@ const SettingsScreen = ({ state, refresh, theme, setTheme, lang, setLang, househ
 
         {/* Add buttons */}
         <div style={{display:"flex", gap:10, marginTop:14, flexWrap:"wrap"}}>
-          {!household.some(m => m.relation === 'partner') && (
+          {!household.some(m => m.relation === 'partner' || m.relation === 'spouse') && (
             <button className="btn" onClick={() => {
               const name = prompt(isEn() ? 'Partner name:' : 'Partners navn:');
               if (name && name.trim()) {
@@ -3191,7 +3224,7 @@ const EntryModal = ({ open, onClose, editData, refresh, household, activeMember 
             <label>{isEn()?'Owner':'Ejer'}</label>
             <select value={owner} onChange={e=>setOwner(e.target.value)}>
               <option value="me">{isEn()?'Me':'Mig'}</option>
-              {household.map(m => <option key={m.id} value={m.id}>{m.name} ({m.relation === 'partner' ? (isEn()?'Partner':'Partner') : (isEn()?'Child':'Barn')})</option>)}
+              {household.map(m => <option key={m.id} value={m.id}>{m.name} ({(m.relation === 'partner' || m.relation === 'spouse') ? (isEn()?'Partner':'Partner') : (isEn()?'Child':'Barn')})</option>)}
             </select>
           </div>
         )}
@@ -3285,7 +3318,7 @@ const PositionModal = ({ open, onClose, editData, refresh, household, activeMemb
             <label>{isEn()?'Owner':'Ejer'}</label>
             <select value={owner} onChange={e=>setOwner(e.target.value)}>
               <option value="me">{isEn()?'Me':'Mig'}</option>
-              {household.map(m => <option key={m.id} value={m.id}>{m.name} ({m.relation === 'partner' ? (isEn()?'Partner':'Partner') : (isEn()?'Child':'Barn')})</option>)}
+              {household.map(m => <option key={m.id} value={m.id}>{m.name} ({(m.relation === 'partner' || m.relation === 'spouse') ? (isEn()?'Partner':'Partner') : (isEn()?'Child':'Barn')})</option>)}
             </select>
           </div>
         )}
