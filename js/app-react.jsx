@@ -174,13 +174,8 @@ const Overview = ({ state, refresh, activeMember, privacyMode, navigateTo, sendQ
   const mortgageBalance = mortgageBalanceRaw * propSplitPct / 100;
   const homeEquity = propertyValue - mortgageBalance;
 
-  // Net worth: use filtered entries but adjust property/mortgage for split
-  // Remove any property/mortgage from filtered entries, add back the split share
+  // Pension config (needed for NW calc below)
   const sharedCats = ['property', 'mortgage'];
-  const entriesExShared = entries.filter(e => !sharedCats.includes(e.category));
-  const totalAssets = entriesExShared.filter(e=>e.type==="asset").reduce((s,e)=>s+e.amount, 0) + propertyValue;
-  const totalLiab = entriesExShared.filter(e=>e.type==="liability").reduce((s,e)=>s+e.amount, 0) + mortgageBalance;
-  const nw = totalAssets - totalLiab;
   const pensionConfigData = useMemo(() => {
     const loadCfg = (key) => {
       try { return JSON.parse(localStorage.getItem(key)) || {}; } catch { return {}; }
@@ -207,6 +202,12 @@ const Overview = ({ state, refresh, activeMember, privacyMode, navigateTo, sendQ
   const pensionLumpSum = pensionConfigData.lumpSum;
   const pensionMonthly = pensionConfigData.monthly;
   const totalPensionSavings = pensionTotal + pensionLumpSum;
+
+  // Net worth: entries (adjusted for property split) + pension from config
+  const entriesExShared = entries.filter(e => !sharedCats.includes(e.category));
+  const totalAssets = entriesExShared.filter(e=>e.type==="asset").reduce((s,e)=>s+e.amount, 0) + propertyValue + pensionLumpSum;
+  const totalLiab = entriesExShared.filter(e=>e.type==="liability").reduce((s,e)=>s+e.amount, 0) + mortgageBalance;
+  const nw = totalAssets - totalLiab;
 
   // Investment breakdown by account type
   const investmentBreakdown = useMemo(() => {
