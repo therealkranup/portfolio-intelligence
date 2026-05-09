@@ -1430,6 +1430,47 @@ const InvestmentsTab = ({ state, refresh, openModal, privacyMode }) => {
                 );
               })}
             </tbody>
+            {(() => {
+              const footInvested = filtered.reduce((s, p) => {
+                if (p.avgPrice && p.avgPrice > 0 && p.shares > 0) {
+                  return s + toDKK((p.shares) * (p.avgPrice), p.currency);
+                }
+                return s;
+              }, 0);
+              const footValue = filtered.reduce((s, p) => s + posVal(p), 0);
+              const footPnl = footValue - footInvested;
+              const footPnlPct = footInvested > 0 ? (footPnl / footInvested * 100) : 0;
+              const hasAvgData = filtered.some(p => p.avgPrice && p.avgPrice > 0);
+              return (
+                <tfoot>
+                  <tr style={{borderTop:"2px solid var(--border)", background:"var(--bg-sunk)"}}>
+                    <td colSpan={5} style={{padding:"8px 12px", fontWeight:600, fontSize:13, color:"var(--text-muted)"}}>
+                      {filtered.length} {filtered.length === 1 ? (isEn()?'position':'position') : (isEn()?'positions':'positioner')}
+                    </td>
+                    <td colSpan={2}></td>
+                    <td className="num" style={{padding:"8px 4px", fontWeight:600, fontSize:13}}>
+                      {hasAvgData ? (
+                        <span style={{color: footPnl >= 0 ? "var(--pos)" : "var(--neg)"}}>
+                          {footPnl >= 0 ? "+" : ""}{footPnlPct.toFixed(1)}%
+                        </span>
+                      ) : "—"}
+                    </td>
+                    <td colSpan={2}></td>
+                    <td className={`num${privacyMode ? ' sensitive' : ''}`} style={{padding:"8px 4px", fontWeight:600, fontSize:13}}>
+                      {fmtC(footValue)}
+                    </td>
+                    <td></td>
+                    <td style={{padding:"8px 4px", textAlign:"right", fontSize:11, color:"var(--text-dim)"}}>
+                      {hasAvgData ? (
+                        <span className={privacyMode ? 'sensitive' : ''} style={{color: footPnl >= 0 ? "var(--pos)" : "var(--neg)"}}>
+                          P&L {fmtC(footPnl)}
+                        </span>
+                      ) : null}
+                    </td>
+                  </tr>
+                </tfoot>
+              );
+            })()}
           </table>
         </div>
       </div>
