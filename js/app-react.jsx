@@ -145,9 +145,6 @@ const Overview = ({ state, refresh, activeMember, privacyMode, navigateTo, sendQ
   const entries = state.entries || [];
   const positions = state.positions || [];
 
-  const totalAssets = entries.filter(e=>e.type==="asset").reduce((s,e)=>s+e.amount, 0);
-  const totalLiab = entries.filter(e=>e.type==="liability").reduce((s,e)=>s+e.amount, 0);
-  const nw = totalAssets - totalLiab;
   const portfolioTotal = positions.reduce((s,p)=>s+toDKK((p.shares||0)*(p.currentPrice||0), p.currency), 0);
 
   // Cross-screen data: pension + home equity + investments
@@ -176,6 +173,14 @@ const Overview = ({ state, refresh, activeMember, privacyMode, navigateTo, sendQ
   const propertyValue = propertyValueRaw * propSplitPct / 100;
   const mortgageBalance = mortgageBalanceRaw * propSplitPct / 100;
   const homeEquity = propertyValue - mortgageBalance;
+
+  // Net worth: use filtered entries but adjust property/mortgage for split
+  // Remove any property/mortgage from filtered entries, add back the split share
+  const sharedCats = ['property', 'mortgage'];
+  const entriesExShared = entries.filter(e => !sharedCats.includes(e.category));
+  const totalAssets = entriesExShared.filter(e=>e.type==="asset").reduce((s,e)=>s+e.amount, 0) + propertyValue;
+  const totalLiab = entriesExShared.filter(e=>e.type==="liability").reduce((s,e)=>s+e.amount, 0) + mortgageBalance;
+  const nw = totalAssets - totalLiab;
   const pensionConfigData = useMemo(() => {
     const loadCfg = (key) => {
       try { return JSON.parse(localStorage.getItem(key)) || {}; } catch { return {}; }
